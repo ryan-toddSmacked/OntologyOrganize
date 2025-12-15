@@ -5,6 +5,7 @@ from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QPixmap, QMouseEvent
 from pathlib import Path
 from typing import List, Dict, Set
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.utils.image_utils import create_thumbnail
 
@@ -43,6 +44,7 @@ class ImageGridWidget(QWidget):
         self.image_label_map = {}  # Maps image path to label
         self.label_colors = {}  # Maps label to color
         self.correlation_mode = False  # Whether we're in correlation base image selection mode
+        self.thread_count = 8  # Number of threads for parallel processing
         self.init_ui()
     
     def init_ui(self):
@@ -105,6 +107,10 @@ class ImageGridWidget(QWidget):
         """Set whether correlation mode is enabled."""
         self.correlation_mode = enabled
     
+    def set_thread_count(self, count: int):
+        """Set the number of threads for parallel processing."""
+        self.thread_count = max(1, min(32, count))  # Clamp between 1 and 32
+    
     def set_grid_size(self, cols: int, rows: int):
         """Update the grid size."""
         self.cols = cols
@@ -151,7 +157,7 @@ class ImageGridWidget(QWidget):
         self.load_page(0)
     
     def load_page(self, page: int, progress_dialog=None):
-        """Load images for the specified page."""
+        """Load images for the specified page using multithreading."""
         self.current_page = page
         self.selected_indices.clear()  # Clear selections when changing pages
         start_idx = page * self.images_per_page
@@ -165,14 +171,38 @@ class ImageGridWidget(QWidget):
             label.setText("")
             label.setStyleSheet("border: 3px solid #ccc; background-color: #f5f5f5;")
         
-        # Load images into labels
-        for idx, img_path in enumerate(page_images):
-            if progress_dialog and progress_dialog.wasCanceled():
-                return
-            
+        # Use ThreadPoolExecutor for parallel thumbnail creation
+        def create_thumbnail_for_image(idx_img_tuple):
+            """Helper function to create thumbnail for a single image."""
+            idx, img_path = idx_img_tuple
             if idx < len(self.image_labels):
-                pixmap = create_thumbnail(img_path, size=(self.image_size, self.image_size), colormap=self.colormap, transform=self.transform)
-                if pixmap:
+                pixmap = create_thumbnail(
+                    img_path, 
+                    size=(self.image_size, self.image_size), 
+                    colormap=self.colormap, 
+                    transform=self.transform
+                )
+                return idx, img_path, pixmap
+            return idx, img_path, None
+        
+        # Process images in parallel
+        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
+            # Submit all tasks
+            futures = {
+                executor.submit(create_thumbnail_for_image, (idx, img_path)): idx
+                for idx, img_path in enumerate(page_images)
+            }
+            
+            # Process completed tasks as they finish
+            completed_count = 0
+            for future in as_completed(futures):
+                if progress_dialog and progress_dialog.wasCanceled():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return
+                
+                idx, img_path, pixmap = future.result()
+                
+                if pixmap and idx < len(self.image_labels):
                     # Scale pixmap to fit label while maintaining aspect ratio
                     scaled_pixmap = pixmap.scaled(
                         self.image_size, self.image_size,
@@ -181,10 +211,6 @@ class ImageGridWidget(QWidget):
                     )
                     self.image_labels[idx].setPixmap(scaled_pixmap)
                     
-                    if progress_dialog:
-                        progress_dialog.setValue(idx + 1)
-                        progress_dialog.setLabelText(f"Applying transform...\nProcessed {idx + 1}/{len(page_images)} images")
-                    
                     # Apply colored border if image is labeled
                     img_path_str = str(img_path)
                     if img_path_str in self.image_label_map:
@@ -192,6 +218,12 @@ class ImageGridWidget(QWidget):
                         if label_name in self.label_colors:
                             color = self.label_colors[label_name]
                             self.image_labels[idx].setStyleSheet(f"border: 3px solid {color}; background-color: #f5f5f5;")
+                
+                # Update progress dialog
+                completed_count += 1
+                if progress_dialog:
+                    progress_dialog.setValue(completed_count)
+                    progress_dialog.setLabelText(f"Applying transform...\nProcessed {completed_count}/{len(page_images)} images")
     
     def next_page(self):
         """Load the next page of images."""

@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         self.correlation_mode = False  # Whether we're in correlation selection mode
         self.correlation_method = 'ncc'  # Method to use for correlation
         self.base_image_for_correlation = None  # Base image path for correlation
+        self.thread_count = 8  # Number of threads for parallel processing
         self.init_ui()
     
     def init_ui(self):
@@ -64,6 +65,10 @@ class MainWindow(QMainWindow):
         # Add colormap settings action
         colormap_settings_action = settings_menu.addAction("Colormap...")
         colormap_settings_action.triggered.connect(self.open_colormap_dialog)
+        
+        # Add thread settings action
+        thread_settings_action = settings_menu.addAction("Thread Count...")
+        thread_settings_action.triggered.connect(self.open_thread_settings_dialog)
         
         # Add View menu
         view_menu = menubar.addMenu("View")
@@ -373,6 +378,23 @@ class MainWindow(QMainWindow):
             self.grid_rows = rows
             self.image_grid.set_grid_size(cols, rows)
             self.update_page_label()
+    
+    def open_thread_settings_dialog(self):
+        """Open the thread count settings dialog."""
+        from PyQt5.QtWidgets import QInputDialog
+        thread_count, ok = QInputDialog.getInt(
+            self,
+            "Thread Count Settings",
+            "Number of threads for parallel image processing:\n(Recommended: 4-16)",
+            self.thread_count,
+            1,  # minimum
+            32,  # maximum
+            1   # step
+        )
+        if ok:
+            self.thread_count = thread_count
+            self.image_grid.set_thread_count(thread_count)
+            print(f"Thread count set to: {thread_count}")
     
     def open_colormap_dialog(self):
         """Open the colormap settings dialog."""
