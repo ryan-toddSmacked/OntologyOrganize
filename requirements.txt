@@ -1,0 +1,7 @@
+PyQt5>=5.15.0
+Pillow>=9.0.0
+numpy>=1.21.0
+scipy>=1.7.0
+cmcrameri>=1.4
+matplotlib>=3.5.0
+cx_Freeze>=6.15.0

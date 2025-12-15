@@ -1,0 +1,852 @@
+"""Main application window."""
+
+from PyQt5.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QLabel, QFileDialog, QListWidget,
+    QListWidgetItem, QSplitter, QPushButton, QScrollArea, QProgressDialog
+)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QWheelEvent
+from pathlib import Path
+
+from src.controllers.image_controller import ImageController
+from src.ui.widgets.image_grid import ImageGridWidget
+from src.ui.widgets.classification_panel import ClassificationPanel
+from src.ui.dialogs.settings_dialog import SettingsDialog
+from src.ui.dialogs.colormap_dialog import ColormapDialog
+from src.ui.view_manager import ViewManager, ViewMode
+from src.utils.export_manager import ExportManager
+from src.utils.progress_manager import ProgressManager
+
+
+class MainWindow(QMainWindow):
+    """Main application window."""
+    
+    def __init__(self):
+        super().__init__()
+        self.controller = ImageController()
+        self.grid_cols = 3
+        self.grid_rows = 4
+        self.zoom_level = 150  # Default zoom level
+        self.colormap = "gray"  # Default colormap
+        self.labeled_images = {}  # Maps image path to label
+        self.label_colors = {}  # Maps label to color
+        self.active_label = None  # Currently active label for selection
+        self.view_manager = ViewManager()  # Manages view mode
+        self.export_manager = ExportManager(self)  # Manages exports
+        self.progress_manager = ProgressManager(self)  # Manages save/load progress
+        self.current_transform = 'none'  # Current image transformation
+        self.correlation_mode = False  # Whether we're in correlation selection mode
+        self.correlation_method = 'ncc'  # Method to use for correlation
+        self.base_image_for_correlation = None  # Base image path for correlation
+        self.init_ui()
+    
+    def init_ui(self):
+        """Initialize the user interface."""
+        self.setWindowTitle("Classifier Organizer")
+        self.setGeometry(100, 100, 1200, 700)
+        
+        # Create menu bar
+        menubar = self.menuBar()
+        file_menu = menubar.addMenu("File")
+        
+        # Add "Open Folder" action to File menu
+        open_folder_action = file_menu.addAction("Open Folder...")
+        open_folder_action.triggered.connect(self.open_folder_dialog)
+        
+        # Add Settings menu
+        settings_menu = menubar.addMenu("Settings")
+        
+        # Add grid settings action
+        grid_settings_action = settings_menu.addAction("Grid Size...")
+        grid_settings_action.triggered.connect(self.open_grid_settings_dialog)
+        
+        # Add colormap settings action
+        colormap_settings_action = settings_menu.addAction("Colormap...")
+        colormap_settings_action.triggered.connect(self.open_colormap_dialog)
+        
+        # Add View menu
+        view_menu = menubar.addMenu("View")
+        
+        # Add view mode actions
+        self.view_unlabeled_action = view_menu.addAction("Show Unlabeled Images")
+        self.view_unlabeled_action.setCheckable(True)
+        self.view_unlabeled_action.setChecked(True)  # Default mode
+        self.view_unlabeled_action.triggered.connect(self.set_view_unlabeled)
+        
+        self.view_labeled_action = view_menu.addAction("Show Labeled Images")
+        self.view_labeled_action.setCheckable(True)
+        self.view_labeled_action.triggered.connect(self.set_view_labeled)
+        
+        self.view_all_action = view_menu.addAction("Show All Images")
+        self.view_all_action.setCheckable(True)
+        self.view_all_action.triggered.connect(self.set_view_all)
+        
+        # Add Export menu
+        export_menu = menubar.addMenu("Export")
+        
+        # Add export actions
+        export_json_action = export_menu.addAction("Export to JSON...")
+        export_json_action.triggered.connect(self.export_to_json)
+        
+        export_csv_action = export_menu.addAction("Export to CSV...")
+        export_csv_action.triggered.connect(self.export_to_csv)
+        
+        export_menu.addSeparator()
+        
+        export_organized_action = export_menu.addAction("Export Organized Copy...")
+        export_organized_action.triggered.connect(self.export_organized_copy)
+        
+        # Add Progress menu
+        progress_menu = menubar.addMenu("Progress")
+        save_progress_action = progress_menu.addAction("Save Progress...")
+        save_progress_action.triggered.connect(self.save_progress)
+        
+        load_progress_action = progress_menu.addAction("Load Progress...")
+        load_progress_action.triggered.connect(self.load_progress)
+        
+        # Add Transform menu
+        transform_menu = menubar.addMenu("Transform")
+        
+        # Add transform actions
+        transform_none_action = transform_menu.addAction("None (Original)")
+        transform_none_action.triggered.connect(lambda: self.set_transform('none'))
+        
+        transform_menu.addSeparator()
+        
+        transform_sobel_action = transform_menu.addAction("Edge Detector (Sobel)")
+        transform_sobel_action.triggered.connect(lambda: self.set_transform('sobel'))
+        
+        transform_prewitt_action = transform_menu.addAction("Edge Detector (Prewitt)")
+        transform_prewitt_action.triggered.connect(lambda: self.set_transform('prewitt'))
+        
+        transform_canny_action = transform_menu.addAction("Edge Detector (Canny)")
+        transform_canny_action.triggered.connect(lambda: self.set_transform('canny'))
+        
+        transform_gradient_action = transform_menu.addAction("Gradient Magnitude")
+        transform_gradient_action.triggered.connect(lambda: self.set_transform('gradient'))
+        
+        transform_laplacian_action = transform_menu.addAction("Laplacian (Edge Enhancement)")
+        transform_laplacian_action.triggered.connect(lambda: self.set_transform('laplacian'))
+        
+        transform_menu.addSeparator()
+        
+        transform_blur_action = transform_menu.addAction("Gaussian Blur")
+        transform_blur_action.triggered.connect(lambda: self.set_transform('gaussian_blur'))
+        
+        transform_median_action = transform_menu.addAction("Median Filter")
+        transform_median_action.triggered.connect(lambda: self.set_transform('median'))
+        
+        transform_bilateral_action = transform_menu.addAction("Bilateral Filter")
+        transform_bilateral_action.triggered.connect(lambda: self.set_transform('bilateral'))
+        
+        transform_sharpen_action = transform_menu.addAction("Sharpen")
+        transform_sharpen_action.triggered.connect(lambda: self.set_transform('sharpen'))
+        
+        transform_highpass_action = transform_menu.addAction("High-Pass Filter")
+        transform_highpass_action.triggered.connect(lambda: self.set_transform('highpass'))
+        
+        transform_menu.addSeparator()
+        
+        # Morphological operations submenu
+        morph_menu = transform_menu.addMenu("Morphological")
+        
+        morph_erosion_action = morph_menu.addAction("Erosion")
+        morph_erosion_action.triggered.connect(lambda: self.set_transform('erosion'))
+        
+        morph_dilation_action = morph_menu.addAction("Dilation")
+        morph_dilation_action.triggered.connect(lambda: self.set_transform('dilation'))
+        
+        morph_opening_action = morph_menu.addAction("Opening")
+        morph_opening_action.triggered.connect(lambda: self.set_transform('opening'))
+        
+        morph_closing_action = morph_menu.addAction("Closing")
+        morph_closing_action.triggered.connect(lambda: self.set_transform('closing'))
+        
+        # Thresholding submenu
+        threshold_menu = transform_menu.addMenu("Thresholding")
+        
+        threshold_otsu_action = threshold_menu.addAction("Otsu's Threshold")
+        threshold_otsu_action.triggered.connect(lambda: self.set_transform('otsu'))
+        
+        threshold_adaptive_action = threshold_menu.addAction("Adaptive Threshold")
+        threshold_adaptive_action.triggered.connect(lambda: self.set_transform('adaptive'))
+        
+        # Feature detection submenu
+        feature_menu = transform_menu.addMenu("Feature Detection")
+        
+        feature_dog_action = feature_menu.addAction("Difference of Gaussians")
+        feature_dog_action.triggered.connect(lambda: self.set_transform('dog'))
+        
+        feature_gabor_action = feature_menu.addAction("Gabor Filter")
+        feature_gabor_action.triggered.connect(lambda: self.set_transform('gabor'))
+        
+        transform_menu.addSeparator()
+        
+        transform_emboss_action = transform_menu.addAction("Emboss")
+        transform_emboss_action.triggered.connect(lambda: self.set_transform('emboss'))
+        
+        transform_invert_action = transform_menu.addAction("Invert")
+        transform_invert_action.triggered.connect(lambda: self.set_transform('invert'))
+        
+        # Add Sort menu
+        sort_menu = menubar.addMenu("Sort")
+        
+        # Pixel-Based submenu
+        pixel_menu = sort_menu.addMenu("Pixel-Based Similarity")
+        
+        pixel_ncc_action = pixel_menu.addAction("Normalized Cross-Correlation (NCC)")
+        pixel_ncc_action.triggered.connect(lambda: self.start_correlation_mode('ncc'))
+        
+        pixel_ssim_action = pixel_menu.addAction("SSIM (Structural Similarity)")
+        pixel_ssim_action.triggered.connect(lambda: self.start_correlation_mode('ssim'))
+        
+        pixel_mae_action = pixel_menu.addAction("Mean Absolute Error (MAE)")
+        pixel_mae_action.triggered.connect(lambda: self.start_correlation_mode('mae'))
+        
+        pixel_mse_action = pixel_menu.addAction("Mean Squared Error (MSE)")
+        pixel_mse_action.triggered.connect(lambda: self.start_correlation_mode('mse'))
+        
+        pixel_cosine_action = pixel_menu.addAction("Cosine Similarity")
+        pixel_cosine_action.triggered.connect(lambda: self.start_correlation_mode('cosine'))
+        
+        # Histogram-Based submenu
+        histogram_menu = sort_menu.addMenu("Histogram-Based Similarity")
+        
+        hist_corr_action = histogram_menu.addAction("Histogram Correlation")
+        hist_corr_action.triggered.connect(lambda: self.start_correlation_mode('hist_corr'))
+        
+        hist_chi_action = histogram_menu.addAction("Chi-Square Distance")
+        hist_chi_action.triggered.connect(lambda: self.start_correlation_mode('chi_square'))
+        
+        hist_bhatt_action = histogram_menu.addAction("Bhattacharyya Distance")
+        hist_bhatt_action.triggered.connect(lambda: self.start_correlation_mode('bhattacharyya'))
+        
+        hist_emd_action = histogram_menu.addAction("Earth Mover's Distance")
+        hist_emd_action.triggered.connect(lambda: self.start_correlation_mode('emd'))
+        
+        # Feature-Based submenu
+        feature_sort_menu = sort_menu.addMenu("Feature-Based Similarity")
+        
+        hog_action = feature_sort_menu.addAction("HOG Similarity")
+        hog_action.triggered.connect(lambda: self.start_correlation_mode('hog'))
+        
+        mi_action = feature_sort_menu.addAction("Mutual Information")
+        mi_action.triggered.connect(lambda: self.start_correlation_mode('mutual_info'))
+        
+        # Perceptual submenu
+        perceptual_menu = sort_menu.addMenu("Perceptual Hashing")
+        
+        phash_action = perceptual_menu.addAction("Perceptual Hash (pHash)")
+        phash_action.triggered.connect(lambda: self.start_correlation_mode('phash'))
+        
+        dhash_action = perceptual_menu.addAction("Difference Hash (dHash)")
+        dhash_action.triggered.connect(lambda: self.start_correlation_mode('dhash'))
+        
+        sort_menu.addSeparator()
+        
+        sort_cancel_action = sort_menu.addAction("Cancel Selection")
+        sort_cancel_action.triggered.connect(self.cancel_correlation_mode)
+        
+        # Create central widget
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # Create main layout
+        main_layout = QVBoxLayout()
+        central_widget.setLayout(main_layout)
+        
+        # Create splitter for left/center/right panels
+        splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(splitter)
+        
+        # Left panel - Image lists (unlabeled and labeled)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout()
+        left_panel.setLayout(left_layout)
+        
+        # Unlabeled images section
+        unlabeled_header = QLabel("Unlabeled Images")
+        unlabeled_header.setStyleSheet("font-weight: bold; font-size: 12px;")
+        left_layout.addWidget(unlabeled_header)
+        
+        self.unlabeled_list = QListWidget()
+        left_layout.addWidget(self.unlabeled_list)
+        
+        # Labeled images section
+        labeled_header = QLabel("Labeled Images")
+        labeled_header.setStyleSheet("font-weight: bold; font-size: 12px; margin-top: 10px;")
+        left_layout.addWidget(labeled_header)
+        
+        self.labeled_list = QListWidget()
+        left_layout.addWidget(self.labeled_list)
+        
+        splitter.addWidget(left_panel)
+        
+        # Center panel - Image grid with navigation
+        center_panel = QWidget()
+        center_layout = QVBoxLayout()
+        center_panel.setLayout(center_layout)
+        
+        # Create scroll area for image grid
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(False)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Image grid
+        self.image_grid = ImageGridWidget(self.grid_cols, self.grid_rows)
+        self.image_grid.main_window = self  # Set reference to main window
+        scroll_area.setWidget(self.image_grid)
+        
+        # Install event filter for custom scrolling
+        scroll_area.viewport().installEventFilter(self)
+        self.scroll_area = scroll_area
+        
+        center_layout.addWidget(scroll_area)
+        
+        # Navigation buttons
+        nav_layout = QHBoxLayout()
+        center_layout.addLayout(nav_layout)
+        
+        self.prev_btn = QPushButton("← Previous")
+        self.prev_btn.clicked.connect(self.prev_page)
+        nav_layout.addWidget(self.prev_btn)
+        
+        self.page_label = QLabel("Page 0 / 0")
+        self.page_label.setAlignment(Qt.AlignCenter)
+        nav_layout.addWidget(self.page_label)
+        
+        self.next_btn = QPushButton("Next →")
+        self.next_btn.clicked.connect(self.next_page)
+        nav_layout.addWidget(self.next_btn)
+        
+        nav_layout.addStretch()
+        
+        # Zoom controls
+        zoom_label = QLabel("Zoom:")
+        nav_layout.addWidget(zoom_label)
+        
+        self.zoom_out_btn = QPushButton("−")
+        self.zoom_out_btn.setFixedWidth(30)
+        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        nav_layout.addWidget(self.zoom_out_btn)
+        
+        self.zoom_level_label = QLabel("100%")
+        self.zoom_level_label.setMinimumWidth(50)
+        self.zoom_level_label.setAlignment(Qt.AlignCenter)
+        nav_layout.addWidget(self.zoom_level_label)
+        
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.setFixedWidth(30)
+        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        nav_layout.addWidget(self.zoom_in_btn)
+        
+        splitter.addWidget(center_panel)
+        
+        # Right panel - Classification Area
+        self.classification_panel = ClassificationPanel(self)
+        splitter.addWidget(self.classification_panel)
+        
+        # Set splitter proportions (20% left, 50% center, 30% right)
+        splitter.setSizes([240, 600, 360])
+    
+    def open_folder_dialog(self):
+        """Open folder dialog and load images."""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Folder with Images",
+            "",
+            QFileDialog.ShowDirsOnly
+        )
+        
+        if folder_path:
+            count, folder = self.controller.load_folder(folder_path)
+            self.display_images()
+    
+    def open_grid_settings_dialog(self):
+        """Open the grid size settings dialog."""
+        dialog = SettingsDialog(self, self.grid_cols, self.grid_rows)
+        if dialog.exec_():
+            cols, rows = dialog.get_grid_size()
+            self.grid_cols = cols
+            self.grid_rows = rows
+            self.image_grid.set_grid_size(cols, rows)
+            self.update_page_label()
+    
+    def open_colormap_dialog(self):
+        """Open the colormap settings dialog."""
+        dialog = ColormapDialog(self, self.colormap)
+        if dialog.exec_():
+            colormap = dialog.get_colormap()
+            self.colormap = colormap
+            self.image_grid.set_colormap(colormap)
+            self.image_grid.load_page(self.image_grid.current_page)
+            self.update_page_label()
+    
+    def display_images(self):
+        """Display loaded images in the list widgets and grid."""
+        self.unlabeled_list.clear()
+        self.labeled_list.clear()
+        
+        all_images = self.controller.get_images()
+        
+        # Filter images based on view mode
+        filtered_images = self.view_manager.filter_images(all_images, self.labeled_images)
+        
+        # Populate the lists
+        for img_path in all_images:
+            self.add_image_to_list(img_path)
+        
+        # Load filtered images into grid
+        self.image_grid.set_images(filtered_images)
+        self.image_grid.set_image_labels(self.labeled_images)
+        self.image_grid.set_label_colors(self.label_colors)
+        self.update_page_label()
+    
+    def add_image_to_list(self, image_path: Path):
+        """Add an image to the appropriate list widget."""
+        # Check if image is labeled
+        if str(image_path) in self.labeled_images:
+            # Add to labeled list with label
+            label = self.labeled_images[str(image_path)]
+            item = QListWidgetItem(f"{image_path.name} [{label}]")
+            item.setData(Qt.UserRole, str(image_path))
+            self.labeled_list.addItem(item)
+        else:
+            # Add to unlabeled list
+            item = QListWidgetItem(image_path.name)
+            item.setData(Qt.UserRole, str(image_path))
+            self.unlabeled_list.addItem(item)
+    
+    def prev_page(self):
+        """Go to previous page."""
+        self.image_grid.prev_page()
+        self.update_page_label()
+    
+    def next_page(self):
+        """Go to next page."""
+        self.image_grid.next_page()
+        self.update_page_label()
+    
+    def update_page_label(self):
+        """Update the page label."""
+        current = self.image_grid.get_current_page() + 1
+        total = self.image_grid.get_total_pages()
+        self.page_label.setText(f"Page {current} / {total}")
+        
+        # Enable/disable navigation buttons
+        self.prev_btn.setEnabled(current > 1)
+        self.next_btn.setEnabled(current < total)
+    
+    def zoom_in(self):
+        """Increase image size."""
+        self.zoom_level = min(500, self.zoom_level + 25)
+        self.image_grid.set_zoom(self.zoom_level)
+        self.update_zoom_label()
+    
+    def zoom_out(self):
+        """Decrease image size."""
+        self.zoom_level = max(50, self.zoom_level - 25)
+        self.image_grid.set_zoom(self.zoom_level)
+        self.update_zoom_label()
+    
+    def update_zoom_label(self):
+        """Update the zoom level label."""
+        percentage = int((self.zoom_level / 150) * 100)
+        self.zoom_level_label.setText(f"{percentage}%")
+    
+    def set_transform(self, transform_name: str):
+        """Set the current image transformation and refresh display."""
+        self.current_transform = transform_name
+        self.image_grid.set_transform(transform_name)
+        
+        # Get number of images on current page
+        start_idx = self.image_grid.current_page * self.image_grid.images_per_page
+        end_idx = start_idx + self.image_grid.images_per_page
+        page_images = self.image_grid.all_images[start_idx:end_idx]
+        num_images = len(page_images)
+        
+        if num_images > 0 and transform_name != 'none':
+            # Create progress dialog for transforms
+            progress = QProgressDialog(f"Applying {transform_name} transform...", "Cancel", 0, num_images, self)
+            progress.setWindowTitle("Applying Transform")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            
+            self.image_grid.load_page(self.image_grid.current_page, progress_dialog=progress)
+            progress.close()
+        else:
+            self.image_grid.load_page(self.image_grid.current_page)
+        
+        print(f"Transform set to: {transform_name}")
+    
+    def start_correlation_mode(self, method: str = 'ncc'):
+        """Start correlation mode - user will select a base image."""
+        self.correlation_mode = True
+        self.correlation_method = method
+        self.base_image_for_correlation = None
+        self.image_grid.set_correlation_mode(True)
+        self.setWindowTitle(f"Classifier Organizer - SELECT BASE IMAGE ({method.upper()})")
+        print(f"Correlation mode started with method: {method}. Click on an image in the grid to use as base.")
+    
+    def cancel_correlation_mode(self):
+        """Cancel correlation mode."""
+        self.correlation_mode = False
+        self.base_image_for_correlation = None
+        self.image_grid.set_correlation_mode(False)
+        self.setWindowTitle("Classifier Organizer")
+        print("Correlation mode cancelled.")
+    
+    def on_base_image_selected(self, image_path: Path):
+        """Called when user selects a base image for correlation."""
+        from src.utils.image_utils import (
+            compute_image_correlation, compute_ssim, compute_histogram_correlation,
+            compute_chi_square_distance, compute_bhattacharyya_distance, compute_emd,
+            compute_mae, compute_cosine_similarity, compute_mutual_information,
+            compute_hog_similarity, compute_perceptual_hash, compute_difference_hash
+        )
+        
+        self.base_image_for_correlation = image_path
+        self.correlation_mode = False
+        self.image_grid.set_correlation_mode(False)
+        self.setWindowTitle("Classifier Organizer - Computing correlations...")
+        
+        print(f"Base image selected: {image_path}")
+        print(f"Computing {self.correlation_method} with all unlabeled images (transform: {self.current_transform})...")
+        
+        # Map method names to functions
+        method_map = {
+            'ncc': lambda p1, p2: compute_image_correlation(p1, p2, method='ncc', transform=self.current_transform),
+            'mse': lambda p1, p2: compute_image_correlation(p1, p2, method='mse', transform=self.current_transform),
+            'ssim': lambda p1, p2: compute_ssim(p1, p2),  # SSIM doesn't use transform parameter yet
+            'mae': lambda p1, p2: compute_mae(p1, p2, transform=self.current_transform),
+            'cosine': lambda p1, p2: compute_cosine_similarity(p1, p2, transform=self.current_transform),
+            'hist_corr': lambda p1, p2: compute_histogram_correlation(p1, p2, transform=self.current_transform),
+            'chi_square': lambda p1, p2: compute_chi_square_distance(p1, p2, transform=self.current_transform),
+            'bhattacharyya': lambda p1, p2: compute_bhattacharyya_distance(p1, p2, transform=self.current_transform),
+            'emd': lambda p1, p2: compute_emd(p1, p2, transform=self.current_transform),
+            'mutual_info': lambda p1, p2: compute_mutual_information(p1, p2, transform=self.current_transform),
+            'hog': lambda p1, p2: compute_hog_similarity(p1, p2, transform=self.current_transform),
+            'phash': lambda p1, p2: compute_perceptual_hash(p1, p2, transform=self.current_transform),
+            'dhash': lambda p1, p2: compute_difference_hash(p1, p2, transform=self.current_transform),
+        }
+        
+        compute_func = method_map.get(self.correlation_method, method_map['ncc'])
+        
+        # Get all unlabeled images
+        all_images = self.controller.get_images()
+        unlabeled_images = [img for img in all_images if str(img) not in self.labeled_images]
+        
+        # Create progress dialog
+        progress = QProgressDialog(f"Computing {self.correlation_method.upper()} similarity...", "Cancel", 0, len(unlabeled_images) - 1, self)
+        progress.setWindowTitle("Sorting Images")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
+        # Compute correlation scores for each unlabeled image
+        correlation_scores = {}
+        processed = 0
+        for img_path in unlabeled_images:
+            if progress.wasCanceled():
+                print("Sorting cancelled by user.")
+                self.setWindowTitle("Classifier Organizer")
+                return
+            
+            if img_path != image_path:  # Don't compare with itself
+                score = compute_func(image_path, img_path)
+                correlation_scores[str(img_path)] = score
+                print(f"  {img_path.name}: {score:.4f}")
+            
+            processed += 1
+            progress.setValue(processed)
+            progress.setLabelText(f"Computing {self.correlation_method.upper()} similarity...\nProcessed {processed}/{len(unlabeled_images)} images")
+        
+        progress.close()
+        
+        # Sort unlabeled images by correlation score (highest first)
+        sorted_unlabeled = sorted(unlabeled_images, 
+                                 key=lambda x: correlation_scores.get(str(x), -999), 
+                                 reverse=True)
+        
+        print(f"Sorted {len(sorted_unlabeled)} unlabeled images by correlation.")
+        
+        # Update the display with sorted images
+        self.display_images_with_custom_order(sorted_unlabeled)
+        
+        self.setWindowTitle("Classifier Organizer - Sorted by correlation")
+        print("Images have been sorted by similarity to the base image!")
+    
+    def display_images_with_custom_order(self, unlabeled_order: list):
+        """Display images with a custom order for unlabeled images."""
+        self.unlabeled_list.clear()
+        self.labeled_list.clear()
+        
+        # Add unlabeled images in the specified order
+        for img_path in unlabeled_order:
+            item = QListWidgetItem(img_path.name)
+            item.setData(Qt.UserRole, str(img_path))
+            self.unlabeled_list.addItem(item)
+        
+        # Add labeled images
+        all_images = self.controller.get_images()
+        for img_path in all_images:
+            if str(img_path) in self.labeled_images:
+                label = self.labeled_images[str(img_path)]
+                item = QListWidgetItem(f"{img_path.name} [{label}]")
+                item.setData(Qt.UserRole, str(img_path))
+                self.labeled_list.addItem(item)
+        
+        # Update grid with filtered images based on view mode
+        filtered_images = self.view_manager.filter_images(all_images, self.labeled_images)
+        
+        # If showing unlabeled or all, use the custom order
+        if self.view_manager.get_current_view_mode() in [ViewMode.UNLABELED, ViewMode.ALL]:
+            # For unlabeled view, just show the sorted unlabeled images
+            if self.view_manager.get_current_view_mode() == ViewMode.UNLABELED:
+                filtered_images = unlabeled_order
+            else:
+                # For all view, combine sorted unlabeled with labeled
+                labeled_images = [img for img in all_images if str(img) in self.labeled_images]
+                filtered_images = unlabeled_order + labeled_images
+        
+        self.image_grid.set_images(filtered_images)
+        self.image_grid.set_image_labels(self.labeled_images)
+        self.image_grid.set_label_colors(self.label_colors)
+        self.update_page_label()
+    
+    def eventFilter(self, obj, event):
+        """Handle custom scroll events for Ctrl+Wheel horizontal scrolling."""
+        if obj == self.scroll_area.viewport() and event.type() == event.Wheel:
+            wheel_event = event
+            if wheel_event.modifiers() == Qt.ControlModifier:
+                # Ctrl+Wheel: scroll horizontally
+                h_bar = self.scroll_area.horizontalScrollBar()
+                delta = -wheel_event.angleDelta().y()
+                h_bar.setValue(h_bar.value() + delta)
+                return True  # Event handled
+        
+        return super().eventFilter(obj, event)
+    
+    def label_selected_images_with_label(self, label: str):
+        """Label the currently selected images in the grid."""
+        print(f"DEBUG: label_selected_images_with_label called with label={label}")
+        
+        # Get pending label assignments from the grid
+        pending_assignments = self.image_grid.get_pending_label_assignments()
+        print(f"DEBUG: Pending assignments: {pending_assignments}")
+        
+        if not pending_assignments:
+            from PyQt5.QtWidgets import QMessageBox
+            print("DEBUG: No images selected, showing warning")
+            QMessageBox.warning(
+                self,
+                "No Images Selected",
+                "Please select one or more images in the grid first."
+            )
+            return
+        
+        # Apply all pending label assignments
+        labels_used = set()
+        for img_path_str, assigned_label in pending_assignments.items():
+            # Assign color to label if not already assigned
+            if assigned_label not in self.label_colors:
+                self.label_colors[assigned_label] = self.generate_color_for_label(len(self.label_colors))
+            
+            self.labeled_images[img_path_str] = assigned_label
+            labels_used.add(assigned_label)
+            print(f"DEBUG: Labeled {img_path_str} as {assigned_label}")
+        
+        # Show success message
+        from PyQt5.QtWidgets import QMessageBox
+        if len(labels_used) == 1:
+            label_text = f"'{list(labels_used)[0]}'"
+        else:
+            label_text = f"{len(labels_used)} different labels"
+        
+        QMessageBox.information(
+            self,
+            "Images Labeled",
+            f"Successfully labeled {len(pending_assignments)} image(s) with {label_text}."
+        )
+        
+        # Clear selections
+        self.image_grid.clear_selections()
+        
+        # Refresh display
+        print("DEBUG: Refreshing display")
+        self.display_images()
+    
+    def generate_color_for_label(self, index: int) -> str:
+        """Generate a unique color for a label based on its index."""
+        # Predefined color palette for better visual distinction
+        colors = [
+            "#e74c3c",  # Red
+            "#3498db",  # Blue
+            "#2ecc71",  # Green
+            "#f39c12",  # Orange
+            "#9b59b6",  # Purple
+            "#1abc9c",  # Turquoise
+            "#e67e22",  # Carrot
+            "#34495e",  # Dark gray
+            "#e91e63",  # Pink
+            "#00bcd4",  # Cyan
+            "#ff9800",  # Amber
+            "#795548",  # Brown
+            "#607d8b",  # Blue gray
+            "#ff5722",  # Deep orange
+            "#8bc34a",  # Light green
+        ]
+        return colors[index % len(colors)]
+    
+    def set_active_label(self, label: str):
+        """Set the currently active label for image selection."""
+        self.active_label = label
+        print(f"DEBUG: Active label set to: {label}")
+    
+    def remove_image_label(self, img_path_str: str):
+        """Remove the label from an image."""
+        print(f"DEBUG: remove_image_label called for {img_path_str}")
+        if img_path_str in self.labeled_images:
+            old_label = self.labeled_images[img_path_str]
+            print(f"DEBUG: Removing label '{old_label}' from image")
+            del self.labeled_images[img_path_str]
+            
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Label Removed",
+                f"Removed label '{old_label}' from image."
+            )
+            
+            # Refresh display to move image back to unlabeled
+            print("DEBUG: Refreshing display after label removal")
+            self.display_images()
+        else:
+            print(f"DEBUG: Image not found in labeled_images dictionary")
+    
+    def set_view_unlabeled(self):
+        """Switch to showing only unlabeled images."""
+        print("DEBUG: Switching to unlabeled images view")
+        self.view_manager.set_view_mode(ViewMode.UNLABELED)
+        self.view_unlabeled_action.setChecked(True)
+        self.view_labeled_action.setChecked(False)
+        self.view_all_action.setChecked(False)
+        self.display_images()
+    
+    def set_view_labeled(self):
+        """Switch to showing only labeled images."""
+        print("DEBUG: Switching to labeled images view")
+        self.view_manager.set_view_mode(ViewMode.LABELED)
+        self.view_unlabeled_action.setChecked(False)
+        self.view_labeled_action.setChecked(True)
+        self.view_all_action.setChecked(False)
+        self.display_images()
+    
+    def set_view_all(self):
+        """Switch to showing all images."""
+        print("DEBUG: Switching to all images view")
+        self.view_manager.set_view_mode(ViewMode.ALL)
+        self.view_unlabeled_action.setChecked(False)
+        self.view_labeled_action.setChecked(False)
+        self.view_all_action.setChecked(True)
+        self.display_images()
+    
+    def export_to_json(self):
+        """Export labeled images to JSON file."""
+        print("DEBUG: Export to JSON triggered")
+        self.export_manager.export_to_json(self.labeled_images, self.controller.get_current_folder())
+    
+    def export_to_csv(self):
+        """Export labeled images to CSV file."""
+        print("DEBUG: Export to CSV triggered")
+        self.export_manager.export_to_csv(self.labeled_images, self.controller.get_current_folder())
+    
+    def export_organized_copy(self):
+        """Export organized copy of labeled images."""
+        print("DEBUG: Export organized copy triggered")
+        self.export_manager.export_organized_copy(self.labeled_images)
+    
+    def save_progress(self):
+        """Save current application state to JSON file."""
+        print("DEBUG: Save progress triggered")
+        
+        # Collect all state data
+        state_data = {
+            "labeled_images": self.labeled_images,
+            "label_colors": self.label_colors,
+            "current_folder": str(self.controller.get_current_folder()) if self.controller.get_current_folder() else None,
+            "ontology_labels": self.classification_panel.get_ontology_labels(),
+            "grid_cols": self.grid_cols,
+            "grid_rows": self.grid_rows,
+            "zoom_level": self.zoom_level,
+            "colormap": self.colormap,
+            "view_mode": self.view_manager.get_current_view_mode().value,
+            "active_label": self.active_label
+        }
+        
+        # Save using progress manager
+        self.progress_manager.save_progress(state_data)
+    
+    def load_progress(self):
+        """Load application state from JSON file."""
+        print("DEBUG: Load progress triggered")
+        
+        # Load state data
+        state_data = self.progress_manager.load_progress()
+        
+        if state_data is None:
+            return  # User cancelled or load failed
+        
+        try:
+            # Restore labeled images and label colors
+            self.labeled_images = state_data.get("labeled_images", {})
+            self.label_colors = state_data.get("label_colors", {})
+            
+            # Restore grid settings
+            self.grid_cols = state_data.get("grid_cols", 3)
+            self.grid_rows = state_data.get("grid_rows", 4)
+            self.zoom_level = state_data.get("zoom_level", 150)
+            self.colormap = state_data.get("colormap", "gray")
+            
+            # Restore active label
+            self.active_label = state_data.get("active_label", None)
+            
+            # Restore ontology labels in classification panel
+            ontology_labels = state_data.get("ontology_labels", [])
+            self.classification_panel.set_ontology_labels(ontology_labels, self.label_colors)
+            
+            # Restore current folder and load images if available
+            current_folder = state_data.get("current_folder", None)
+            if current_folder:
+                folder_path = Path(current_folder)
+                if folder_path.exists():
+                    count, folder = self.controller.load_folder(str(folder_path))
+                    print(f"DEBUG: Loaded {count} images from folder")
+                else:
+                    print(f"WARNING: Saved folder path does not exist: {current_folder}")
+            
+            # Restore view mode
+            view_mode_value = state_data.get("view_mode", ViewMode.UNLABELED.value)
+            if view_mode_value == ViewMode.UNLABELED.value:
+                self.set_view_unlabeled()
+            elif view_mode_value == ViewMode.LABELED.value:
+                self.set_view_labeled()
+            else:
+                self.set_view_all()
+            
+            # Update UI - display_images() handles clearing and repopulating the lists and grid
+            self.display_images()
+            
+            print("DEBUG: Progress loaded successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to restore state: {e}")
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Restore Failed",
+                f"Failed to fully restore application state:\n{str(e)}"
+            )
+
