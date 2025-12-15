@@ -9,7 +9,7 @@ kiwisolver==1.4.9
 matplotlib==3.10.8
 numpy==2.3.5
 packaging==25.0
-patchelf==0.17.2.4
+patchelf==0.17.2.4; sys_platform == 'linux'
 pillow==12.0.0
 pyparsing==3.2.5
 PyQt5==5.15.11
