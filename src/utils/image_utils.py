@@ -9,22 +9,26 @@ import io
 from src.utils.image_transforms import apply_transform
 
 
-def create_thumbnail(image_path: Path, size: tuple[int, int] = (100, 100), colormap: str = "gray", transform: str = "none") -> QPixmap | None:
+def create_thumbnail(image_path: Path, size: tuple[int, int] = (100, 100), colormap: str = "gray", transform: str = "none", cached_image: Image.Image = None) -> QPixmap | None:
     """
-    Create a thumbnail QPixmap from an image file.
+    Create a thumbnail QPixmap from an image file or cached image.
     
     Args:
         image_path: Path to image file
         size: Thumbnail size (width, height)
         colormap: Colormap to apply (default: "gray")
         transform: Image transformation to apply (default: "none")
+        cached_image: Optional pre-loaded PIL Image to use instead of loading from disk
         
     Returns:
         QPixmap thumbnail or None if error
     """
     try:
-        # Load image
-        img = Image.open(image_path)
+        # Use cached image if available, otherwise load from disk
+        if cached_image is not None:
+            img = cached_image.copy()  # Make a copy to avoid modifying cached version
+        else:
+            img = Image.open(image_path)
         
         # Always convert to grayscale if image has multiple channels
         # Handles RGB, RGBA, CMYK, and other multi-channel formats
@@ -102,7 +106,7 @@ def apply_colormap(gray_image: np.ndarray, colormap_name: str) -> Image.Image:
             cmap = plt.get_cmap(colormap_name)
         
         # Normalize image to 0-1 range
-        normalized = gray_image.astype(float) / 255.0
+        normalized = gray_image.astype(np.float32) / 255.0
         
         # Apply colormap
         colored = cmap(normalized)
@@ -118,7 +122,31 @@ def apply_colormap(gray_image: np.ndarray, colormap_name: str) -> Image.Image:
         return Image.fromarray(gray_image, 'L')
 
 
-def compute_image_correlation(img1_path: Path, img2_path: Path, method: str = 'ncc', transform: str = 'none') -> float:
+def _load_image(img_path: Path, image_cache: dict = None) -> Image.Image:
+    """
+    Load an image from cache or disk.
+    
+    Args:
+        img_path: Path to image file
+        image_cache: Optional dict of cached images {path: PIL.Image}
+        
+    Returns:
+        PIL Image in grayscale
+    """
+    # Try to get from cache first
+    if image_cache is not None:
+        cached_img = image_cache.get(str(img_path))
+        if cached_img is not None:
+            return cached_img.copy()
+    
+    # Load from disk
+    img = Image.open(img_path)
+    if img.mode != 'L':
+        img = img.convert('L')
+    return img
+
+
+def compute_image_correlation(img1_path: Path, img2_path: Path, method: str = 'ncc', transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute similarity score between two images.
     
@@ -127,33 +155,28 @@ def compute_image_correlation(img1_path: Path, img2_path: Path, method: str = 'n
         img2_path: Path to second image (comparison image)
         method: Correlation method ('ncc' for normalized cross-correlation, 'mse' for mean squared error)
         transform: Image transformation to apply before correlation (default: 'none')
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Similarity score (higher is more similar for ncc, lower is more similar for mse)
     """
     try:
-        # Load both images
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        # Convert to grayscale
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        # Load both images (from cache if available)
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         # Resize img2 to match img1 dimensions
         if img1.size != img2.size:
             img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
         
         # Convert to numpy arrays
-        arr1 = np.array(img1, dtype=np.float64)
-        arr2 = np.array(img2, dtype=np.float64)
+        arr1 = np.array(img1, dtype=np.float32)
+        arr2 = np.array(img2, dtype=np.float32)
         
         # Apply transformation if specified
         if transform != 'none':
-            arr1 = apply_transform(arr1.astype(np.uint8), transform).astype(np.float64)
-            arr2 = apply_transform(arr2.astype(np.uint8), transform).astype(np.float64)
+            arr1 = apply_transform(arr1.astype(np.uint8), transform).astype(np.float32)
+            arr2 = apply_transform(arr2.astype(np.uint8), transform).astype(np.float32)
         
         if method == 'ncc':
             # Normalized Cross-Correlation
@@ -211,8 +234,8 @@ def compute_ssim(img1_path: Path, img2_path: Path) -> float:
             img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
         
         # Convert to numpy arrays
-        arr1 = np.array(img1, dtype=np.float64)
-        arr2 = np.array(img2, dtype=np.float64)
+        arr1 = np.array(img1, dtype=np.float32)
+        arr2 = np.array(img2, dtype=np.float32)
         
         # SSIM calculation
         C1 = (0.01 * 255) ** 2
@@ -241,7 +264,7 @@ def compute_ssim(img1_path: Path, img2_path: Path) -> float:
         return 0.0
 
 
-def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute histogram correlation between two images.
     
@@ -249,18 +272,14 @@ def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: s
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply before correlation
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Histogram correlation score (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
@@ -274,8 +293,8 @@ def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: s
         hist2, _ = np.histogram(arr2.flatten(), bins=256, range=(0, 256))
         
         # Normalize
-        hist1 = hist1.astype(float) / hist1.sum()
-        hist2 = hist2.astype(float) / hist2.sum()
+        hist1 = hist1.astype(np.float32) / hist1.sum()
+        hist2 = hist2.astype(np.float32) / hist2.sum()
         
         # Compute correlation
         corr = np.corrcoef(hist1, hist2)[0, 1]
@@ -286,7 +305,7 @@ def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: s
         return 0.0
 
 
-def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute chi-square distance between histograms (lower is more similar).
     
@@ -294,18 +313,14 @@ def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Negative chi-square distance (higher is more similar for consistency)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
@@ -318,8 +333,8 @@ def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str
         hist2, _ = np.histogram(arr2.flatten(), bins=256, range=(0, 256))
         
         # Add small epsilon to avoid division by zero
-        hist1 = hist1.astype(float) + 1e-10
-        hist2 = hist2.astype(float) + 1e-10
+        hist1 = hist1.astype(np.float32) + 1e-10
+        hist2 = hist2.astype(np.float32) + 1e-10
         
         # Chi-square distance
         chi_square = np.sum((hist1 - hist2) ** 2 / (hist1 + hist2))
@@ -332,7 +347,7 @@ def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str
         return 0.0
 
 
-def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute Bhattacharyya distance between histograms.
     
@@ -340,18 +355,14 @@ def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: 
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Negative Bhattacharyya distance (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
@@ -364,8 +375,8 @@ def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: 
         hist2, _ = np.histogram(arr2.flatten(), bins=256, range=(0, 256))
         
         # Normalize
-        hist1 = hist1.astype(float) / hist1.sum()
-        hist2 = hist2.astype(float) / hist2.sum()
+        hist1 = hist1.astype(np.float32) / hist1.sum()
+        hist2 = hist2.astype(np.float32) / hist2.sum()
         
         # Bhattacharyya coefficient
         bc = np.sum(np.sqrt(hist1 * hist2))
@@ -381,7 +392,7 @@ def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: 
         return 0.0
 
 
-def compute_emd(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_emd(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute Earth Mover's Distance (Wasserstein distance) between histograms.
     
@@ -389,6 +400,7 @@ def compute_emd(img1_path: Path, img2_path: Path, transform: str = 'none') -> fl
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Negative EMD (higher is more similar)
@@ -396,13 +408,8 @@ def compute_emd(img1_path: Path, img2_path: Path, transform: str = 'none') -> fl
     try:
         from scipy.stats import wasserstein_distance
         
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
@@ -422,7 +429,7 @@ def compute_emd(img1_path: Path, img2_path: Path, transform: str = 'none') -> fl
         return 0.0
 
 
-def compute_mae(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_mae(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute Mean Absolute Error.
     
@@ -430,28 +437,24 @@ def compute_mae(img1_path: Path, img2_path: Path, transform: str = 'none') -> fl
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Negative MAE (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         if img1.size != img2.size:
             img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
         
-        arr1 = np.array(img1, dtype=np.float64)
-        arr2 = np.array(img2, dtype=np.float64)
+        arr1 = np.array(img1, dtype=np.float32)
+        arr2 = np.array(img2, dtype=np.float32)
         
         if transform != 'none':
-            arr1 = apply_transform(arr1.astype(np.uint8), transform).astype(np.float64)
-            arr2 = apply_transform(arr2.astype(np.uint8), transform).astype(np.float64)
+            arr1 = apply_transform(arr1.astype(np.uint8), transform).astype(np.float32)
+            arr2 = apply_transform(arr2.astype(np.uint8), transform).astype(np.float32)
         
         mae = np.mean(np.abs(arr1 - arr2))
         return float(-mae)
@@ -461,7 +464,7 @@ def compute_mae(img1_path: Path, img2_path: Path, transform: str = 'none') -> fl
         return 0.0
 
 
-def compute_cosine_similarity(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_cosine_similarity(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute cosine similarity between images.
     
@@ -469,28 +472,24 @@ def compute_cosine_similarity(img1_path: Path, img2_path: Path, transform: str =
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Cosine similarity (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         if img1.size != img2.size:
             img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
         
-        arr1 = np.array(img1, dtype=np.float64)
-        arr2 = np.array(img2, dtype=np.float64)
+        arr1 = np.array(img1, dtype=np.float32)
+        arr2 = np.array(img2, dtype=np.float32)
         
         if transform != 'none':
-            arr1 = apply_transform(arr1.astype(np.uint8), transform).astype(np.float64)
-            arr2 = apply_transform(arr2.astype(np.uint8), transform).astype(np.float64)
+            arr1 = apply_transform(arr1.astype(np.uint8), transform).astype(np.float32)
+            arr2 = apply_transform(arr2.astype(np.uint8), transform).astype(np.float32)
         
         # Flatten arrays
         vec1 = arr1.flatten()
@@ -509,7 +508,7 @@ def compute_cosine_similarity(img1_path: Path, img2_path: Path, transform: str =
         return 0.0
 
 
-def compute_mutual_information(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_mutual_information(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute mutual information between images.
     
@@ -517,18 +516,14 @@ def compute_mutual_information(img1_path: Path, img2_path: Path, transform: str 
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Mutual information (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         if img1.size != img2.size:
             img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
@@ -562,7 +557,7 @@ def compute_mutual_information(img1_path: Path, img2_path: Path, transform: str 
         return 0.0
 
 
-def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute similarity based on Histogram of Oriented Gradients.
     
@@ -570,6 +565,7 @@ def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'n
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         HOG similarity (higher is more similar)
@@ -577,13 +573,8 @@ def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'n
     try:
         from scipy.ndimage import gaussian_filter
         
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         if img1.size != img2.size:
             img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
@@ -625,7 +616,7 @@ def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'n
         return 0.0
 
 
-def compute_perceptual_hash(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_perceptual_hash(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute perceptual hash similarity.
     
@@ -633,18 +624,14 @@ def compute_perceptual_hash(img1_path: Path, img2_path: Path, transform: str = '
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Similarity based on hash distance (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
@@ -682,7 +669,7 @@ def compute_perceptual_hash(img1_path: Path, img2_path: Path, transform: str = '
         return 0.0
 
 
-def compute_difference_hash(img1_path: Path, img2_path: Path, transform: str = 'none') -> float:
+def compute_difference_hash(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
     """
     Compute difference hash similarity.
     
@@ -690,18 +677,14 @@ def compute_difference_hash(img1_path: Path, img2_path: Path, transform: str = '
         img1_path: Path to first image
         img2_path: Path to second image
         transform: Image transformation to apply
+        image_cache: Optional dict of cached images {path: PIL.Image}
         
     Returns:
         Similarity based on dHash (higher is more similar)
     """
     try:
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        if img1.mode != 'L':
-            img1 = img1.convert('L')
-        if img2.mode != 'L':
-            img2 = img2.convert('L')
+        img1 = _load_image(img1_path, image_cache)
+        img2 = _load_image(img2_path, image_cache)
         
         arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)

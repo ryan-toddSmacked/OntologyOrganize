@@ -45,6 +45,7 @@ class ImageGridWidget(QWidget):
         self.label_colors = {}  # Maps label to color
         self.correlation_mode = False  # Whether we're in correlation base image selection mode
         self.thread_count = 8  # Number of threads for parallel processing
+        self.image_cache = {}  # Cache for preloaded images {path: PIL.Image}
         self.init_ui()
     
     def init_ui(self):
@@ -176,11 +177,15 @@ class ImageGridWidget(QWidget):
             """Helper function to create thumbnail for a single image."""
             idx, img_path = idx_img_tuple
             if idx < len(self.image_labels):
+                # Get cached image if available
+                cached_img = self.image_cache.get(str(img_path), None)
+                
                 pixmap = create_thumbnail(
                     img_path, 
                     size=(self.image_size, self.image_size), 
                     colormap=self.colormap, 
-                    transform=self.transform
+                    transform=self.transform,
+                    cached_image=cached_img
                 )
                 return idx, img_path, pixmap
             return idx, img_path, None
@@ -397,3 +402,44 @@ class ImageGridWidget(QWidget):
     def set_active_label(self, label: str):
         """Set the active label that will be used for new selections."""
         self.active_label = label
+    
+    def preload_all_images(self, image_paths: list, progress_dialog=None):
+        """Preload all images into memory cache."""
+        from PIL import Image
+        
+        print(f"Preloading {len(image_paths)} images into memory...")
+        self.image_cache.clear()
+        
+        for idx, img_path in enumerate(image_paths):
+            if progress_dialog and progress_dialog.wasCanceled():
+                print("Preload cancelled.")
+                self.image_cache.clear()
+                return False
+            
+            try:
+                # Load image and convert to grayscale
+                with Image.open(img_path) as img:
+                    if img.mode != 'L':
+                        img = img.convert('L')
+                    
+                    # Force load image data into memory and close file handle
+                    img.load()
+                    
+                    # Store in cache
+                    self.image_cache[str(img_path)] = img
+                
+                if progress_dialog:
+                    progress_dialog.setValue(idx + 1)
+                    if (idx + 1) % 100 == 0:
+                        progress_dialog.setLabelText(f"Preloading images...\nLoaded {idx + 1}/{len(image_paths)} images")
+            
+            except Exception as e:
+                print(f"Error preloading {img_path}: {e}")
+        
+        print(f"Preloaded {len(self.image_cache)} images.")
+        return True
+    
+    def clear_preloaded_images(self):
+        """Clear the preloaded image cache."""
+        self.image_cache.clear()
+        print("Image cache cleared.")

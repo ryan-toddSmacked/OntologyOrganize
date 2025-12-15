@@ -53,6 +53,30 @@ class ClassificationPanel(QWidget):
         layout.addWidget(labels_header)
         
         self.ontology_list = QListWidget()
+        self.ontology_list.setStyleSheet("""
+            QListWidget {
+                font-size: 14px;
+                border: 2px solid #ccc;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 10px;
+                margin: 2px;
+                border: 2px solid #ddd;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+            }
+            QListWidget::item:hover {
+                background-color: #e8f4fd;
+                border-color: #0078d4;
+            }
+            QListWidget::item:selected {
+                background-color: #0078d4;
+                color: white;
+                border-color: #005a9e;
+                font-weight: bold;
+            }
+        """)
         layout.addWidget(self.ontology_list)
         
         # Add/Remove label buttons

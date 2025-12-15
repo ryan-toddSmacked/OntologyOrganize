@@ -33,14 +33,14 @@ class SettingsDialog(QDialog):
         # Columns spinner
         self.cols_spinner = QSpinBox()
         self.cols_spinner.setMinimum(1)
-        self.cols_spinner.setMaximum(25)
+        self.cols_spinner.setMaximum(20)
         self.cols_spinner.setValue(self.grid_cols)
         grid_layout.addRow("Columns:", self.cols_spinner)
         
         # Rows spinner
         self.rows_spinner = QSpinBox()
         self.rows_spinner.setMinimum(1)
-        self.rows_spinner.setMaximum(100)
+        self.rows_spinner.setMaximum(1000)
         self.rows_spinner.setValue(self.grid_rows)
         grid_layout.addRow("Rows:", self.rows_spinner)
         

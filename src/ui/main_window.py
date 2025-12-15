@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         self.label_colors = {}  # Maps label to color
         self.active_label = None  # Currently active label for selection
         self.view_manager = ViewManager()  # Manages view mode
+        self.custom_sort_order = None  # Stores custom sorted order of unlabeled images
         self.export_manager = ExportManager(self)  # Manages exports
         self.progress_manager = ProgressManager(self)  # Manages save/load progress
         self.current_transform = 'none'  # Current image transformation
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         self.correlation_method = 'ncc'  # Method to use for correlation
         self.base_image_for_correlation = None  # Base image path for correlation
         self.thread_count = 8  # Number of threads for parallel processing
+        self.preload_images = False  # Whether to preload all images into memory
         self.init_ui()
     
     def init_ui(self):
@@ -69,6 +71,12 @@ class MainWindow(QMainWindow):
         # Add thread settings action
         thread_settings_action = settings_menu.addAction("Thread Count...")
         thread_settings_action.triggered.connect(self.open_thread_settings_dialog)
+        
+        # Add preload images setting
+        self.preload_images_action = settings_menu.addAction("Preload All Images")
+        self.preload_images_action.setCheckable(True)
+        self.preload_images_action.setChecked(self.preload_images)
+        self.preload_images_action.triggered.connect(self.toggle_preload_images)
         
         # Add View menu
         view_menu = menubar.addMenu("View")
@@ -367,6 +375,7 @@ class MainWindow(QMainWindow):
         
         if folder_path:
             count, folder = self.controller.load_folder(folder_path)
+            self.custom_sort_order = None  # Clear custom sort when loading new folder
             self.display_images()
     
     def open_grid_settings_dialog(self):
@@ -395,6 +404,57 @@ class MainWindow(QMainWindow):
             self.thread_count = thread_count
             self.image_grid.set_thread_count(thread_count)
             print(f"Thread count set to: {thread_count}")
+    
+    def toggle_preload_images(self):
+        """Toggle preloading all images into memory."""
+        from PyQt5.QtWidgets import QMessageBox
+        
+        self.preload_images = self.preload_images_action.isChecked()
+        
+        if self.preload_images:
+            # Warn about memory usage
+            all_images = self.controller.get_images()
+            num_images = len(all_images)
+            estimated_mb = (num_images * 280 * 280) / (1024 * 1024)  # Rough estimate
+            
+            reply = QMessageBox.question(
+                self,
+                "Preload Images",
+                f"This will load all {num_images} images into memory.\n"
+                f"Estimated memory usage: ~{estimated_mb:.0f} MB\n\n"
+                f"This may take a few minutes but will significantly speed up navigation.\n\n"
+                f"Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Start preloading
+                progress = QProgressDialog("Preloading images into memory...", "Cancel", 0, num_images, self)
+                progress.setWindowTitle("Loading Images")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.setValue(0)
+                
+                success = self.image_grid.preload_all_images(all_images, progress)
+                progress.close()
+                
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Preload Complete",
+                        f"Successfully preloaded {num_images} images into memory."
+                    )
+                else:
+                    self.preload_images = False
+                    self.preload_images_action.setChecked(False)
+            else:
+                self.preload_images = False
+                self.preload_images_action.setChecked(False)
+        else:
+            # Clear preloaded images
+            self.image_grid.clear_preloaded_images()
+            print("Preloaded images cleared from memory.")
     
     def open_colormap_dialog(self):
         """Open the colormap settings dialog."""
@@ -572,6 +632,7 @@ class MainWindow(QMainWindow):
             compute_mae, compute_cosine_similarity, compute_mutual_information,
             compute_hog_similarity, compute_perceptual_hash, compute_difference_hash
         )
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
         self.base_image_for_correlation = image_path
         self.correlation_mode = False
@@ -581,21 +642,24 @@ class MainWindow(QMainWindow):
         print(f"Base image selected: {image_path}")
         print(f"Computing {self.correlation_method} with all unlabeled images (transform: {self.current_transform})...")
         
+        # Get image cache from image_grid
+        image_cache = self.image_grid.image_cache if self.image_grid.image_cache else None
+        
         # Map method names to functions
         method_map = {
-            'ncc': lambda p1, p2: compute_image_correlation(p1, p2, method='ncc', transform=self.current_transform),
-            'mse': lambda p1, p2: compute_image_correlation(p1, p2, method='mse', transform=self.current_transform),
+            'ncc': lambda p1, p2: compute_image_correlation(p1, p2, method='ncc', transform=self.current_transform, image_cache=image_cache),
+            'mse': lambda p1, p2: compute_image_correlation(p1, p2, method='mse', transform=self.current_transform, image_cache=image_cache),
             'ssim': lambda p1, p2: compute_ssim(p1, p2),  # SSIM doesn't use transform parameter yet
-            'mae': lambda p1, p2: compute_mae(p1, p2, transform=self.current_transform),
-            'cosine': lambda p1, p2: compute_cosine_similarity(p1, p2, transform=self.current_transform),
-            'hist_corr': lambda p1, p2: compute_histogram_correlation(p1, p2, transform=self.current_transform),
-            'chi_square': lambda p1, p2: compute_chi_square_distance(p1, p2, transform=self.current_transform),
-            'bhattacharyya': lambda p1, p2: compute_bhattacharyya_distance(p1, p2, transform=self.current_transform),
-            'emd': lambda p1, p2: compute_emd(p1, p2, transform=self.current_transform),
-            'mutual_info': lambda p1, p2: compute_mutual_information(p1, p2, transform=self.current_transform),
-            'hog': lambda p1, p2: compute_hog_similarity(p1, p2, transform=self.current_transform),
-            'phash': lambda p1, p2: compute_perceptual_hash(p1, p2, transform=self.current_transform),
-            'dhash': lambda p1, p2: compute_difference_hash(p1, p2, transform=self.current_transform),
+            'mae': lambda p1, p2: compute_mae(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'cosine': lambda p1, p2: compute_cosine_similarity(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'hist_corr': lambda p1, p2: compute_histogram_correlation(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'chi_square': lambda p1, p2: compute_chi_square_distance(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'bhattacharyya': lambda p1, p2: compute_bhattacharyya_distance(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'emd': lambda p1, p2: compute_emd(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'mutual_info': lambda p1, p2: compute_mutual_information(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'hog': lambda p1, p2: compute_hog_similarity(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'phash': lambda p1, p2: compute_perceptual_hash(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'dhash': lambda p1, p2: compute_difference_hash(p1, p2, transform=self.current_transform, image_cache=image_cache),
         }
         
         compute_func = method_map.get(self.correlation_method, method_map['ncc'])
@@ -611,23 +675,40 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setValue(0)
         
-        # Compute correlation scores for each unlabeled image
-        correlation_scores = {}
-        processed = 0
-        for img_path in unlabeled_images:
-            if progress.wasCanceled():
-                print("Sorting cancelled by user.")
-                self.setWindowTitle("Classifier Organizer")
-                return
-            
+        # Helper function for parallel correlation computation
+        def compute_correlation_for_image(img_path):
+            """Compute correlation score for a single image."""
             if img_path != image_path:  # Don't compare with itself
                 score = compute_func(image_path, img_path)
-                correlation_scores[str(img_path)] = score
-                print(f"  {img_path.name}: {score:.4f}")
+                return img_path, score
+            return img_path, None
+        
+        # Compute correlation scores in parallel
+        correlation_scores = {}
+        processed = 0
+        
+        with ThreadPoolExecutor(max_workers=self.thread_count) as executor:
+            # Submit all tasks
+            futures = {
+                executor.submit(compute_correlation_for_image, img_path): img_path
+                for img_path in unlabeled_images
+            }
             
-            processed += 1
-            progress.setValue(processed)
-            progress.setLabelText(f"Computing {self.correlation_method.upper()} similarity...\nProcessed {processed}/{len(unlabeled_images)} images")
+            # Process completed tasks as they finish
+            for future in as_completed(futures):
+                if progress.wasCanceled():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    self.setWindowTitle("Classifier Organizer")
+                    return
+                
+                img_path, score = future.result()
+                
+                if score is not None:
+                    correlation_scores[str(img_path)] = score
+                
+                processed += 1
+                progress.setValue(processed)
+                progress.setLabelText(f"Computing {self.correlation_method.upper()} similarity...\nProcessed {processed}/{len(unlabeled_images)} images")
         
         progress.close()
         
@@ -636,13 +717,13 @@ class MainWindow(QMainWindow):
                                  key=lambda x: correlation_scores.get(str(x), -999), 
                                  reverse=True)
         
-        print(f"Sorted {len(sorted_unlabeled)} unlabeled images by correlation.")
+        # Store the custom sort order
+        self.custom_sort_order = sorted_unlabeled
         
         # Update the display with sorted images
         self.display_images_with_custom_order(sorted_unlabeled)
         
         self.setWindowTitle("Classifier Organizer - Sorted by correlation")
-        print("Images have been sorted by similarity to the base image!")
     
     def display_images_with_custom_order(self, unlabeled_order: list):
         """Display images with a custom order for unlabeled images."""
@@ -742,7 +823,25 @@ class MainWindow(QMainWindow):
         
         # Refresh display
         print("DEBUG: Refreshing display")
-        self.display_images()
+        # Save current page to restore it after refresh
+        current_page = self.image_grid.get_current_page()
+        
+        # Update custom sort order by removing labeled images
+        if self.custom_sort_order is not None:
+            # Remove newly labeled images from custom sort order
+            self.custom_sort_order = [img for img in self.custom_sort_order if str(img) not in self.labeled_images]
+            # Use custom order display
+            self.display_images_with_custom_order(self.custom_sort_order)
+        else:
+            # Use normal display
+            self.display_images()
+        
+        # Restore page position (or closest valid page if images were removed)
+        total_pages = self.image_grid.get_total_pages()
+        if total_pages > 0:
+            target_page = min(current_page, total_pages - 1)
+            self.image_grid.load_page(target_page)
+            self.update_page_label()
     
     def generate_color_for_label(self, index: int) -> str:
         """Generate a unique color for a label based on its index."""

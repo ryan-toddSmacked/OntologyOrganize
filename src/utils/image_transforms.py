@@ -20,8 +20,8 @@ def sobel_edge_detector(img_array: np.ndarray) -> np.ndarray:
     sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
     
     # Apply convolution
-    edge_x = ndimage.convolve(img_array.astype(float), sobel_x)
-    edge_y = ndimage.convolve(img_array.astype(float), sobel_y)
+    edge_x = ndimage.convolve(img_array.astype(np.float32), sobel_x)
+    edge_y = ndimage.convolve(img_array.astype(np.float32), sobel_y)
     
     # Compute magnitude
     edge_magnitude = np.sqrt(edge_x**2 + edge_y**2)
@@ -61,7 +61,7 @@ def laplacian_filter(img_array: np.ndarray) -> np.ndarray:
     laplacian = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]])
     
     # Apply convolution
-    filtered = ndimage.convolve(img_array.astype(float), laplacian)
+    filtered = ndimage.convolve(img_array.astype(np.float32), laplacian)
     
     # Normalize to 0-255
     filtered = np.clip(filtered + 128, 0, 255).astype(np.uint8)
@@ -83,7 +83,7 @@ def sharpen_filter(img_array: np.ndarray) -> np.ndarray:
     sharpen = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
     
     # Apply convolution
-    sharpened = ndimage.convolve(img_array.astype(float), sharpen)
+    sharpened = ndimage.convolve(img_array.astype(np.float32), sharpen)
     
     # Clip to valid range
     sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
@@ -105,7 +105,7 @@ def emboss_filter(img_array: np.ndarray) -> np.ndarray:
     emboss = np.array([[-2, -1, 0], [-1, 1, 1], [0, 1, 2]])
     
     # Apply convolution
-    embossed = ndimage.convolve(img_array.astype(float), emboss)
+    embossed = ndimage.convolve(img_array.astype(np.float32), emboss)
     
     # Normalize to 0-255 range (adding 128 to center around middle gray)
     embossed = np.clip(embossed + 128, 0, 255).astype(np.uint8)
@@ -141,8 +141,8 @@ def prewitt_edge_detector(img_array: np.ndarray) -> np.ndarray:
     prewitt_y = np.array([[-1, -1, -1], [0, 0, 0], [1, 1, 1]])
     
     # Apply convolution
-    edge_x = ndimage.convolve(img_array.astype(float), prewitt_x)
-    edge_y = ndimage.convolve(img_array.astype(float), prewitt_y)
+    edge_x = ndimage.convolve(img_array.astype(np.float32), prewitt_x)
+    edge_y = ndimage.convolve(img_array.astype(np.float32), prewitt_y)
     
     # Compute magnitude
     edge_magnitude = np.sqrt(edge_x**2 + edge_y**2)
@@ -182,7 +182,7 @@ def bilateral_filter(img_array: np.ndarray) -> np.ndarray:
     # Simplified bilateral using recursive Gaussian filtering
     from scipy.ndimage import gaussian_filter
     sigma_spatial = 3.0
-    filtered = gaussian_filter(img_array.astype(float), sigma=sigma_spatial)
+    filtered = gaussian_filter(img_array.astype(np.float32), sigma=sigma_spatial)
     return np.clip(filtered, 0, 255).astype(np.uint8)
 
 
@@ -198,7 +198,7 @@ def canny_edge_detector(img_array: np.ndarray) -> np.ndarray:
     """
     # Simplified Canny using gradient magnitude and thresholding
     # Step 1: Gaussian smoothing
-    smoothed = ndimage.gaussian_filter(img_array.astype(float), sigma=1.4)
+    smoothed = ndimage.gaussian_filter(img_array.astype(np.float32), sigma=1.4)
     
     # Step 2: Gradient calculation
     sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
@@ -231,8 +231,8 @@ def gradient_magnitude(img_array: np.ndarray) -> np.ndarray:
         Gradient magnitude as numpy array
     """
     # Calculate gradients in x and y
-    gx = ndimage.sobel(img_array.astype(float), axis=1)
-    gy = ndimage.sobel(img_array.astype(float), axis=0)
+    gx = ndimage.sobel(img_array.astype(np.float32), axis=1)
+    gy = ndimage.sobel(img_array.astype(np.float32), axis=0)
     
     # Compute magnitude
     magnitude = np.sqrt(gx**2 + gy**2)
@@ -317,7 +317,7 @@ def otsu_threshold(img_array: np.ndarray) -> np.ndarray:
     """
     # Calculate histogram
     hist, _ = np.histogram(img_array.flatten(), bins=256, range=(0, 256))
-    hist = hist.astype(float)
+    hist = hist.astype(np.float32)
     
     # Normalize histogram
     hist_norm = hist / hist.sum()
@@ -364,7 +364,7 @@ def adaptive_threshold(img_array: np.ndarray, block_size: int = 11) -> np.ndarra
         Binary thresholded image as numpy array
     """
     # Calculate local mean using uniform filter
-    local_mean = ndimage.uniform_filter(img_array.astype(float), size=block_size)
+    local_mean = ndimage.uniform_filter(img_array.astype(np.float32), size=block_size)
     
     # Threshold: pixel value compared to local mean minus offset
     offset = 5
@@ -385,8 +385,8 @@ def difference_of_gaussians(img_array: np.ndarray, sigma1: float = 1.0, sigma2: 
     Returns:
         DoG filtered image as numpy array
     """
-    gaussian1 = ndimage.gaussian_filter(img_array.astype(float), sigma=sigma1)
-    gaussian2 = ndimage.gaussian_filter(img_array.astype(float), sigma=sigma2)
+    gaussian1 = ndimage.gaussian_filter(img_array.astype(np.float32), sigma=sigma1)
+    gaussian2 = ndimage.gaussian_filter(img_array.astype(np.float32), sigma=sigma2)
     
     dog = gaussian1 - gaussian2
     
@@ -431,7 +431,7 @@ def gabor_filter(img_array: np.ndarray, frequency: float = 0.15, theta: float = 
     gabor = gaussian_envelope * sinusoid
     
     # Apply convolution
-    filtered = convolve(img_array.astype(float), gabor)
+    filtered = convolve(img_array.astype(np.float32), gabor)
     
     # Normalize using mean and std for better contrast
     filtered = np.abs(filtered)  # Take magnitude
@@ -459,10 +459,10 @@ def high_pass_filter(img_array: np.ndarray) -> np.ndarray:
         High-pass filtered image as numpy array
     """
     # Low-pass filter (blur)
-    low_pass = ndimage.gaussian_filter(img_array.astype(float), sigma=2.0)
+    low_pass = ndimage.gaussian_filter(img_array.astype(np.float32), sigma=2.0)
     
     # High-pass = Original - Low-pass
-    high_pass = img_array.astype(float) - low_pass
+    high_pass = img_array.astype(np.float32) - low_pass
     
     # Shift to positive range and normalize
     high_pass = high_pass + 128
