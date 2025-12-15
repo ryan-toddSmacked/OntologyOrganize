@@ -421,11 +421,54 @@ class MainWindow(QMainWindow):
     
     def prev_page(self):
         """Go to previous page."""
+        # Check if transform is active and create progress dialog
+        if self.current_transform != 'none':
+            target_page = self.image_grid.current_page - 1
+            if target_page >= 0:
+                start_idx = target_page * self.image_grid.images_per_page
+                end_idx = start_idx + self.image_grid.images_per_page
+                page_images = self.image_grid.all_images[start_idx:end_idx]
+                num_images = len(page_images)
+                
+                if num_images > 0:
+                    progress = QProgressDialog(f"Applying {self.current_transform} transform...", "Cancel", 0, num_images, self)
+                    progress.setWindowTitle("Applying Transform")
+                    progress.setWindowModality(Qt.WindowModal)
+                    progress.setMinimumDuration(0)
+                    progress.setValue(0)
+                    
+                    self.image_grid.load_page(target_page, progress_dialog=progress)
+                    progress.close()
+                    self.update_page_label()
+                    return
+        
         self.image_grid.prev_page()
         self.update_page_label()
     
     def next_page(self):
         """Go to next page."""
+        # Check if transform is active and create progress dialog
+        if self.current_transform != 'none':
+            target_page = self.image_grid.current_page + 1
+            max_page = (len(self.image_grid.all_images) - 1) // self.image_grid.images_per_page
+            if target_page <= max_page:
+                start_idx = target_page * self.image_grid.images_per_page
+                end_idx = start_idx + self.image_grid.images_per_page
+                page_images = self.image_grid.all_images[start_idx:end_idx]
+                num_images = len(page_images)
+                
+                if num_images > 0:
+                    progress = QProgressDialog(f"Applying {self.current_transform} transform...", "Cancel", 0, num_images, self)
+                    progress.setWindowTitle("Applying Transform")
+                    progress.setWindowModality(Qt.WindowModal)
+                    progress.setMinimumDuration(0)
+                    progress.setValue(0)
+                    
+                    self.image_grid.load_page(target_page, progress_dialog=progress)
+                    progress.close()
+                    self.update_page_label()
+                    return
+        
         self.image_grid.next_page()
         self.update_page_label()
     

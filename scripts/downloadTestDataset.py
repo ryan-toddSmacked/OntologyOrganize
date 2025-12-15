@@ -1,4 +1,4 @@
-"""Download 500 MNIST digit images for testing."""
+"""Download all MNIST digit images for testing multithreading."""
 
 import gzip
 import urllib.request
@@ -42,15 +42,15 @@ def parse_mnist_labels(filepath: Path) -> np.ndarray:
     return labels
 
 
-def download_mnist_images(output_dir: str, num_images: int = 500):
+def download_mnist_images(output_dir: str, num_images: int = None):
     """
     Download and save MNIST digit images.
     
     Args:
         output_dir: Directory to save images
-        num_images: Number of images to download (default: 500)
+        num_images: Number of images to download (default: None = all images)
     """
-    print(f"Downloading {num_images} MNIST images...")
+    print(f"Downloading {'all' if num_images is None else num_images} MNIST images...")
     
     # Create output directory
     output_path = Path(output_dir)
@@ -66,47 +66,67 @@ def download_mnist_images(output_dir: str, num_images: int = 500):
         files = {
             "train_images": "train-images-idx3-ubyte.gz",
             "train_labels": "train-labels-idx1-ubyte.gz",
+            "test_images": "t10k-images-idx3-ubyte.gz",
+            "test_labels": "t10k-labels-idx1-ubyte.gz",
         }
         
         # Download files
         print("Downloading MNIST dataset...")
         train_images_path = temp_dir / files["train_images"]
         train_labels_path = temp_dir / files["train_labels"]
+        test_images_path = temp_dir / files["test_images"]
+        test_labels_path = temp_dir / files["test_labels"]
         
         if not train_images_path.exists():
             download_file(base_url + files["train_images"], train_images_path)
         if not train_labels_path.exists():
             download_file(base_url + files["train_labels"], train_labels_path)
+        if not test_images_path.exists():
+            download_file(base_url + files["test_images"], test_images_path)
+        if not test_labels_path.exists():
+            download_file(base_url + files["test_labels"], test_labels_path)
         
         # Parse MNIST files
         print("Parsing MNIST data...")
-        images = parse_mnist_images(train_images_path)
-        labels = parse_mnist_labels(train_labels_path)
+        train_images = parse_mnist_images(train_images_path)
+        train_labels = parse_mnist_labels(train_labels_path)
+        test_images = parse_mnist_images(test_images_path)
+        test_labels = parse_mnist_labels(test_labels_path)
         
-        # Take only the requested number
-        images = images[:num_images]
-        labels = labels[:num_images]
+        # Combine training and test sets for full dataset
+        all_images = np.concatenate([train_images, test_images])
+        all_labels = np.concatenate([train_labels, test_labels])
+        
+        # Take only the requested number if specified
+        if num_images is not None:
+            all_images = all_images[:num_images]
+            all_labels = all_labels[:num_images]
+        
+        total_images = len(all_images)
         
         # Save images
-        print(f"Saving {num_images} images...")
-        for idx, (image, label) in enumerate(zip(images, labels)):
+        print(f"Saving {total_images} images (scaling to 280x280)...")
+        for idx, (image, label) in enumerate(zip(all_images, all_labels)):
             # Convert to PIL Image
             img = Image.fromarray(image, mode='L')
+            
+            # Scale by factor of 10 using bilinear interpolation (28x28 -> 280x280)
+            img = img.resize((280, 280), Image.BILINEAR)
             
             # Save with label in filename: mnist_0001_digit5.png
             filename = f"mnist_{idx:04d}_digit{label}.png"
             filepath = output_path / filename
             img.save(filepath)
             
-            if (idx + 1) % 100 == 0:
-                print(f"  Saved {idx + 1}/{num_images} images...")
+            if (idx + 1) % 1000 == 0:
+                print(f"  Saved {idx + 1}/{total_images} images...")
         
         # Clean up temp files
         print("Cleaning up temporary files...")
         import shutil
         shutil.rmtree(temp_dir)
         
-        print(f"✓ Successfully saved {num_images} images to {output_dir}")
+        print(f"✓ Successfully saved {total_images} images to {output_dir}")
         
     except Exception as e:
         print(f"Error downloading MNIST dataset: {e}")
@@ -121,8 +141,9 @@ def main():
     project_root = Path(__file__).parent.parent
     output_dir = project_root / "data" / "mnist" / "images"
     
-    # Download images
-    success = download_mnist_images(str(output_dir), num_images=500)
+    # Download all MNIST images (70,000 total: 60,000 training + 10,000 test)
+    # Pass None or omit num_images parameter to download all images
+    success = download_mnist_images(str(output_dir))
     
     if success:
         print(f"\nImages are ready in: {output_dir}")
