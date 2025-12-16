@@ -959,7 +959,10 @@ class MainWindow(QMainWindow):
                 "current_transform": self.current_transform,
                 "current_page": self.image_grid.current_page,
                 "thread_count": self.thread_count,
-                "preload_images": self.preload_images
+                "preload_images": self.preload_images,
+                "custom_sort_order": [str(img) for img in self.custom_sort_order] if self.custom_sort_order else None,
+                "base_image_for_correlation": str(self.base_image_for_correlation) if self.base_image_for_correlation else None,
+                "correlation_method": self.correlation_method
             }
             
             # Save using progress manager
@@ -995,7 +998,10 @@ class MainWindow(QMainWindow):
                 "current_transform": self.current_transform,
                 "current_page": self.image_grid.current_page,
                 "thread_count": self.thread_count,
-                "preload_images": self.preload_images
+                "preload_images": self.preload_images,
+                "custom_sort_order": [str(img) for img in self.custom_sort_order] if self.custom_sort_order else None,
+                "base_image_for_correlation": str(self.base_image_for_correlation) if self.base_image_for_correlation else None,
+                "correlation_method": self.correlation_method
             }
             
             # Quick save using progress manager
@@ -1059,6 +1065,21 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'preload_images_action'):
                 self.preload_images_action.setChecked(self.preload_images)
             
+            # Restore sorting state
+            custom_sort_order_str = state_data.get("custom_sort_order", None)
+            if custom_sort_order_str:
+                self.custom_sort_order = [Path(img_str) for img_str in custom_sort_order_str]
+            else:
+                self.custom_sort_order = None
+            
+            base_image_str = state_data.get("base_image_for_correlation", None)
+            if base_image_str:
+                self.base_image_for_correlation = Path(base_image_str)
+            else:
+                self.base_image_for_correlation = None
+            
+            self.correlation_method = state_data.get("correlation_method", "ncc")
+            
             # Restore active label
             self.active_label = state_data.get("active_label", None)
             
@@ -1095,7 +1116,11 @@ class MainWindow(QMainWindow):
                 self.set_view_all()
             
             # Update UI - display_images() handles clearing and repopulating the lists and grid
-            self.display_images()
+            # Use custom sort order if it exists
+            if self.custom_sort_order:
+                self.display_images_with_custom_order(self.custom_sort_order)
+            else:
+                self.display_images()
             
             # Restore the current page index
             saved_page = state_data.get("current_page", 0)
