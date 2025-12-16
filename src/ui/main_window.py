@@ -1099,7 +1099,7 @@ class MainWindow(QMainWindow):
             
             # Restore the current page index
             saved_page = state_data.get("current_page", 0)
-            if saved_page > 0 and saved_page < self.image_grid.total_pages():
+            if saved_page > 0 and saved_page < self.image_grid.get_total_pages():
                 self.image_grid.load_page(saved_page)
                 self.update_page_label()
             
