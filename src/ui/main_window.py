@@ -114,9 +114,15 @@ class MainWindow(QMainWindow):
         progress_menu = menubar.addMenu("Progress")
         save_progress_action = progress_menu.addAction("Save Progress...")
         save_progress_action.triggered.connect(self.save_progress)
+        save_progress_action.setShortcut("Ctrl+S")
+        
+        quick_save_action = progress_menu.addAction("Quick Save")
+        quick_save_action.triggered.connect(self.quick_save_progress)
+        quick_save_action.setShortcut("Ctrl+Shift+S")
         
         load_progress_action = progress_menu.addAction("Load Progress...")
         load_progress_action.triggered.connect(self.load_progress)
+        load_progress_action.setShortcut("Ctrl+O")
         
         # Add Transform menu
         transform_menu = menubar.addMenu("Transform")
@@ -937,22 +943,71 @@ class MainWindow(QMainWindow):
         """Save current application state to JSON file."""
         print("DEBUG: Save progress triggered")
         
-        # Collect all state data
-        state_data = {
-            "labeled_images": self.labeled_images,
-            "label_colors": self.label_colors,
-            "current_folder": str(self.controller.get_current_folder()) if self.controller.get_current_folder() else None,
-            "ontology_labels": self.classification_panel.get_ontology_labels(),
-            "grid_cols": self.grid_cols,
-            "grid_rows": self.grid_rows,
-            "zoom_level": self.zoom_level,
-            "colormap": self.colormap,
-            "view_mode": self.view_manager.get_current_view_mode().value,
-            "active_label": self.active_label
-        }
+        try:
+            # Collect all state data
+            state_data = {
+                "labeled_images": self.labeled_images,
+                "label_colors": self.label_colors,
+                "current_folder": str(self.controller.get_current_folder()) if self.controller.get_current_folder() else None,
+                "ontology_labels": self.classification_panel.get_ontology_labels(),
+                "grid_cols": self.grid_cols,
+                "grid_rows": self.grid_rows,
+                "zoom_level": self.zoom_level,
+                "colormap": self.colormap,
+                "view_mode": self.view_manager.get_current_view_mode().value,
+                "active_label": self.active_label,
+                "current_transform": self.current_transform,
+                "thread_count": self.thread_count,
+                "preload_images": self.preload_images
+            }
+            
+            # Save using progress manager
+            success = self.progress_manager.save_progress(state_data)
+            if success:
+                print("DEBUG: Progress saved successfully")
+        except Exception as e:
+            print(f"ERROR: Failed to collect state data: {e}")
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Save Failed",
+                f"Failed to collect application state:\n{str(e)}"
+            )
+    
+    def quick_save_progress(self):
+        """Quick save to the last used file without prompting."""
+        print("DEBUG: Quick save progress triggered")
         
-        # Save using progress manager
-        self.progress_manager.save_progress(state_data)
+        try:
+            # Collect all state data
+            state_data = {
+                "labeled_images": self.labeled_images,
+                "label_colors": self.label_colors,
+                "current_folder": str(self.controller.get_current_folder()) if self.controller.get_current_folder() else None,
+                "ontology_labels": self.classification_panel.get_ontology_labels(),
+                "grid_cols": self.grid_cols,
+                "grid_rows": self.grid_rows,
+                "zoom_level": self.zoom_level,
+                "colormap": self.colormap,
+                "view_mode": self.view_manager.get_current_view_mode().value,
+                "active_label": self.active_label,
+                "current_transform": self.current_transform,
+                "thread_count": self.thread_count,
+                "preload_images": self.preload_images
+            }
+            
+            # Quick save using progress manager
+            success = self.progress_manager.quick_save(state_data)
+            if success:
+                print("DEBUG: Quick save completed")
+        except Exception as e:
+            print(f"ERROR: Failed to quick save: {e}")
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Quick Save Failed",
+                f"Failed to quick save:\n{str(e)}"
+            )
     
     def load_progress(self):
         """Load application state from JSON file."""
@@ -965,22 +1020,52 @@ class MainWindow(QMainWindow):
             return  # User cancelled or load failed
         
         try:
-            # Restore labeled images and label colors
-            self.labeled_images = state_data.get("labeled_images", {})
-            self.label_colors = state_data.get("label_colors", {})
+            # Restore labeled images and label colors with validation
+            loaded_labeled_images = state_data.get("labeled_images", {})
+            if isinstance(loaded_labeled_images, dict):
+                self.labeled_images = loaded_labeled_images
+            else:
+                print("WARNING: Invalid labeled_images format, using empty dict")
+                self.labeled_images = {}
             
-            # Restore grid settings
-            self.grid_cols = state_data.get("grid_cols", 3)
-            self.grid_rows = state_data.get("grid_rows", 4)
-            self.zoom_level = state_data.get("zoom_level", 150)
+            loaded_label_colors = state_data.get("label_colors", {})
+            if isinstance(loaded_label_colors, dict):
+                self.label_colors = loaded_label_colors
+            else:
+                print("WARNING: Invalid label_colors format, using empty dict")
+                self.label_colors = {}
+            
+            # Restore grid settings with validation
+            self.grid_cols = max(1, state_data.get("grid_cols", 3))
+            self.grid_rows = max(1, state_data.get("grid_rows", 4))
+            self.zoom_level = max(50, min(300, state_data.get("zoom_level", 150)))
             self.colormap = state_data.get("colormap", "gray")
+            
+            # Apply grid size to the image grid widget
+            self.image_grid.set_grid_size(self.grid_cols, self.grid_rows)
+            
+            # Apply zoom level to the image grid widget
+            self.image_grid.set_zoom(self.zoom_level)
+            
+            # Apply colormap to the image grid widget
+            self.image_grid.set_colormap(self.colormap)
+            
+            # Restore additional settings
+            self.current_transform = state_data.get("current_transform", "none")
+            self.thread_count = max(1, state_data.get("thread_count", 8))
+            self.preload_images = state_data.get("preload_images", False)
+            if hasattr(self, 'preload_images_action'):
+                self.preload_images_action.setChecked(self.preload_images)
             
             # Restore active label
             self.active_label = state_data.get("active_label", None)
             
             # Restore ontology labels in classification panel
             ontology_labels = state_data.get("ontology_labels", [])
-            self.classification_panel.set_ontology_labels(ontology_labels, self.label_colors)
+            if isinstance(ontology_labels, list):
+                self.classification_panel.set_ontology_labels(ontology_labels, self.label_colors)
+            else:
+                print("WARNING: Invalid ontology_labels format")
             
             # Restore current folder and load images if available
             current_folder = state_data.get("current_folder", None)
@@ -991,6 +1076,12 @@ class MainWindow(QMainWindow):
                     print(f"DEBUG: Loaded {count} images from folder")
                 else:
                     print(f"WARNING: Saved folder path does not exist: {current_folder}")
+                    from PyQt5.QtWidgets import QMessageBox
+                    QMessageBox.warning(
+                        self,
+                        "Folder Not Found",
+                        f"The saved folder path does not exist:\n{current_folder}\n\nYou may need to open a folder manually."
+                    )
             
             # Restore view mode
             view_mode_value = state_data.get("view_mode", ViewMode.UNLABELED.value)
@@ -1004,9 +1095,16 @@ class MainWindow(QMainWindow):
             # Update UI - display_images() handles clearing and repopulating the lists and grid
             self.display_images()
             
+            # Apply transform after displaying images
+            # We call set_transform which will reload the current page with the transform
+            if self.current_transform != "none":
+                self.set_transform(self.current_transform)
+            
             print("DEBUG: Progress loaded successfully")
         except Exception as e:
             print(f"ERROR: Failed to restore state: {e}")
+            import traceback
+            traceback.print_exc()
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.critical(
                 self,
