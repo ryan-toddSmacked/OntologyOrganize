@@ -957,6 +957,7 @@ class MainWindow(QMainWindow):
                 "view_mode": self.view_manager.get_current_view_mode().value,
                 "active_label": self.active_label,
                 "current_transform": self.current_transform,
+                "current_page": self.image_grid.current_page,
                 "thread_count": self.thread_count,
                 "preload_images": self.preload_images
             }
@@ -992,6 +993,7 @@ class MainWindow(QMainWindow):
                 "view_mode": self.view_manager.get_current_view_mode().value,
                 "active_label": self.active_label,
                 "current_transform": self.current_transform,
+                "current_page": self.image_grid.current_page,
                 "thread_count": self.thread_count,
                 "preload_images": self.preload_images
             }
@@ -1094,6 +1096,12 @@ class MainWindow(QMainWindow):
             
             # Update UI - display_images() handles clearing and repopulating the lists and grid
             self.display_images()
+            
+            # Restore the current page index
+            saved_page = state_data.get("current_page", 0)
+            if saved_page > 0 and saved_page < self.image_grid.total_pages():
+                self.image_grid.load_page(saved_page)
+                self.update_page_label()
             
             # Apply transform after displaying images
             # We call set_transform which will reload the current page with the transform
