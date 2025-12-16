@@ -16,6 +16,7 @@ build_exe_options = {
         "cmcrameri",
         "pathlib",
         "io",
+        "xml",
     ],
     "includes": [
         "scipy.ndimage",
@@ -28,7 +29,6 @@ build_exe_options = {
         "unittest",
         "email",
         "http",
-        "xml",
         "PyQt5.QtQml",
         "PyQt5.QtQuick",
         "PyQt5.QtWebEngine",
