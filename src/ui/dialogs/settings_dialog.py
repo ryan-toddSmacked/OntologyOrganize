@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-    QSpinBox, QPushButton, QGroupBox, QFormLayout
+    QSpinBox, QPushButton, QGroupBox, QFormLayout, QCheckBox
 )
 from PyQt5.QtCore import Qt
 
@@ -45,7 +45,6 @@ class SettingsDialog(QDialog):
         grid_layout.addRow("Rows:", self.rows_spinner)
         
         layout.addWidget(grid_group)
-        
         
         # Buttons
         button_layout = QHBoxLayout()

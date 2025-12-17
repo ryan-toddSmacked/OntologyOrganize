@@ -42,6 +42,9 @@ class MainWindow(QMainWindow):
         self.base_image_for_correlation = None  # Base image path for correlation
         self.thread_count = 8  # Number of threads for parallel processing
         self.preload_images = False  # Whether to preload all images into memory
+        self.binary_mode = False  # Whether to use binary classification mode
+        self.binary_positive_class = "Positive Class"  # Label for positive class in binary mode
+        self.binary_negative_class = "Negative Class"  # Label for negative class in binary mode
         self.init_ui()
     
     def init_ui(self):
@@ -67,6 +70,10 @@ class MainWindow(QMainWindow):
         # Add colormap settings action
         colormap_settings_action = settings_menu.addAction("Colormap...")
         colormap_settings_action.triggered.connect(self.open_colormap_dialog)
+        
+        # Add binary mode settings action
+        binary_mode_settings_action = settings_menu.addAction("Binary Mode...")
+        binary_mode_settings_action.triggered.connect(self.open_binary_mode_dialog)
         
         # Add thread settings action
         thread_settings_action = settings_menu.addAction("Thread Count...")
@@ -383,7 +390,25 @@ class MainWindow(QMainWindow):
         )
         
         if folder_path:
-            count, folder = self.controller.load_folder(folder_path)
+            # Create progress dialog
+            progress = QProgressDialog("Scanning folder for images...", "Cancel", 0, 100, self)
+            progress.setWindowTitle("Loading Images")
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            
+            # Progress callback
+            def update_progress(current, total, filename):
+                if progress.wasCanceled():
+                    return
+                progress.setMaximum(total)
+                progress.setValue(current)
+                progress.setLabelText(f"Scanning folder for images...\n{filename}")
+            
+            # Load folder with progress
+            count, folder = self.controller.load_folder(folder_path, update_progress)
+            progress.close()
+            
             self.custom_sort_order = None  # Clear custom sort when loading new folder
             self.display_images()
     
@@ -396,6 +421,111 @@ class MainWindow(QMainWindow):
             self.grid_rows = rows
             self.image_grid.set_grid_size(cols, rows)
             self.update_page_label()
+    
+    def open_binary_mode_dialog(self):
+        """Open the binary mode settings dialog."""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QCheckBox, QLineEdit, QLabel, QPushButton, QGroupBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Binary Mode Settings")
+        dialog.setModal(True)
+        dialog.resize(400, 250)
+        
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+        
+        # Binary mode checkbox
+        mode_group = QGroupBox("Classification Mode")
+        mode_layout = QVBoxLayout()
+        mode_group.setLayout(mode_layout)
+        
+        binary_checkbox = QCheckBox("Enable Binary Mode")
+        binary_checkbox.setChecked(self.binary_mode)
+        binary_checkbox.setToolTip("Enable binary classification with only 2 classes")
+        mode_layout.addWidget(binary_checkbox)
+        
+        help_label = QLabel("When enabled, only 2 classes will be available for classification.")
+        help_label.setStyleSheet("font-size: 10px; color: gray;")
+        help_label.setWordWrap(True)
+        mode_layout.addWidget(help_label)
+        
+        layout.addWidget(mode_group)
+        
+        # Class name inputs
+        labels_group = QGroupBox("Class Labels")
+        labels_layout = QVBoxLayout()
+        labels_group.setLayout(labels_layout)
+        
+        pos_label = QLabel("Positive Class Name:")
+        labels_layout.addWidget(pos_label)
+        positive_input = QLineEdit()
+        positive_input.setText(self.binary_positive_class)
+        positive_input.setPlaceholderText("Enter positive class name...")
+        labels_layout.addWidget(positive_input)
+        
+        neg_label = QLabel("Negative Class Name:")
+        neg_label.setStyleSheet("margin-top: 10px;")
+        labels_layout.addWidget(neg_label)
+        negative_input = QLineEdit()
+        negative_input.setText(self.binary_negative_class)
+        negative_input.setPlaceholderText("Enter negative class name...")
+        labels_layout.addWidget(negative_input)
+        
+        layout.addWidget(labels_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        layout.addLayout(button_layout)
+        button_layout.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(dialog.accept)
+        ok_btn.setDefault(True)
+        button_layout.addWidget(ok_btn)
+        
+        # Execute dialog
+        if dialog.exec_():
+            new_binary_mode = binary_checkbox.isChecked()
+            new_positive = positive_input.text().strip() or "Positive Class"
+            new_negative = negative_input.text().strip() or "Negative Class"
+            
+            # Update settings
+            mode_changed = new_binary_mode != self.binary_mode
+            self.binary_mode = new_binary_mode
+            self.binary_positive_class = new_positive
+            self.binary_negative_class = new_negative
+            
+            # Update classification panel
+            self.update_classification_panel_mode()
+            
+            # Show confirmation message if mode changed
+            if mode_changed:
+                from PyQt5.QtWidgets import QMessageBox
+                if new_binary_mode:
+                    QMessageBox.information(
+                        self,
+                        "Binary Mode Enabled",
+                        f"Classification panel now shows only 2 labels:\n'{new_positive}' and '{new_negative}'"
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Binary Mode Disabled",
+                        "Classification panel restored to multi-label mode."
+                    )
+    
+    def update_classification_panel_mode(self):
+        """Update the classification panel based on binary mode setting."""
+        if hasattr(self, 'classification_panel'):
+            self.classification_panel.set_binary_mode(
+                self.binary_mode,
+                self.binary_positive_class,
+                self.binary_negative_class
+            )
     
     def open_thread_settings_dialog(self):
         """Open the thread count settings dialog."""
@@ -1018,7 +1148,10 @@ class MainWindow(QMainWindow):
                 "preload_images": self.preload_images,
                 "custom_sort_order": [str(img) for img in self.custom_sort_order] if self.custom_sort_order else None,
                 "base_image_for_correlation": str(self.base_image_for_correlation) if self.base_image_for_correlation else None,
-                "correlation_method": self.correlation_method
+                "correlation_method": self.correlation_method,
+                "binary_mode": self.binary_mode,
+                "binary_positive_class": self.binary_positive_class,
+                "binary_negative_class": self.binary_negative_class
             }
             
             # Save using progress manager
@@ -1057,7 +1190,10 @@ class MainWindow(QMainWindow):
                 "preload_images": self.preload_images,
                 "custom_sort_order": [str(img) for img in self.custom_sort_order] if self.custom_sort_order else None,
                 "base_image_for_correlation": str(self.base_image_for_correlation) if self.base_image_for_correlation else None,
-                "correlation_method": self.correlation_method
+                "correlation_method": self.correlation_method,
+                "binary_mode": self.binary_mode,
+                "binary_positive_class": self.binary_positive_class,
+                "binary_negative_class": self.binary_negative_class
             }
             
             # Quick save using progress manager
@@ -1121,6 +1257,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'preload_images_action'):
                 self.preload_images_action.setChecked(self.preload_images)
             
+            # Restore binary mode settings
+            self.binary_mode = state_data.get("binary_mode", False)
+            self.binary_positive_class = state_data.get("binary_positive_class", "Positive Class")
+            self.binary_negative_class = state_data.get("binary_negative_class", "Negative Class")
+            
             # Restore sorting state
             custom_sort_order_str = state_data.get("custom_sort_order", None)
             if custom_sort_order_str:
@@ -1146,12 +1287,32 @@ class MainWindow(QMainWindow):
             else:
                 print("WARNING: Invalid ontology_labels format")
             
+            # Apply binary mode to classification panel
+            self.update_classification_panel_mode()
+            
             # Restore current folder and load images if available
             current_folder = state_data.get("current_folder", None)
             if current_folder:
                 folder_path = Path(current_folder)
                 if folder_path.exists():
-                    count, folder = self.controller.load_folder(str(folder_path))
+                    # Create progress dialog
+                    progress = QProgressDialog("Scanning folder for images...", "Cancel", 0, 100, self)
+                    progress.setWindowTitle("Loading Images")
+                    progress.setWindowModality(Qt.WindowModal)
+                    progress.setMinimumDuration(0)
+                    progress.setValue(0)
+                    
+                    # Progress callback
+                    def update_progress(current, total, filename):
+                        if progress.wasCanceled():
+                            return
+                        progress.setMaximum(total)
+                        progress.setValue(current)
+                        progress.setLabelText(f"Scanning folder for images...\n{filename}")
+                    
+                    count, folder = self.controller.load_folder(str(folder_path), update_progress)
+                    progress.close()
+                    
                     print(f"DEBUG: Loaded {count} images from folder")
                 else:
                     print(f"WARNING: Saved folder path does not exist: {current_folder}")

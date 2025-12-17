@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QFileDialog, QInputDialog, QMessageBox
+    QListWidget, QFileDialog, QInputDialog, QMessageBox, QLineEdit
 )
 from PyQt5.QtCore import Qt
 from pathlib import Path
@@ -16,6 +16,7 @@ class ClassificationPanel(QWidget):
         self.main_window = parent  # Store reference to main window
         self.ontology_labels = []  # List of ontology labels
         self.ontology_file_path = None  # Path to loaded ontology file
+        self.binary_mode = False  # Whether in binary classification mode
         self.init_ui()
     
     def init_ui(self):
@@ -78,6 +79,53 @@ class ClassificationPanel(QWidget):
             }
         """)
         layout.addWidget(self.ontology_list)
+        
+        # Binary mode widgets (initially hidden)
+        self.binary_widget = QWidget()
+        binary_layout = QVBoxLayout()
+        self.binary_widget.setLayout(binary_layout)
+        
+        # Binary mode label list
+        binary_header = QLabel("Binary Classes:")
+        binary_header.setStyleSheet("font-weight: bold;")
+        binary_layout.addWidget(binary_header)
+        
+        self.binary_list = QListWidget()
+        self.binary_list.setStyleSheet("""
+            QListWidget {
+                font-size: 14px;
+                border: 2px solid #ccc;
+                border-radius: 4px;
+            }
+            QListWidget::item {
+                padding: 10px;
+                margin: 2px;
+                border: 2px solid #ddd;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+            }
+            QListWidget::item:hover {
+                background-color: #e8f4fd;
+                border-color: #0078d4;
+            }
+            QListWidget::item:selected {
+                background-color: #0078d4;
+                color: white;
+                border-color: #005a9e;
+                font-weight: bold;
+            }
+        """)
+        self.binary_list.currentItemChanged.connect(self.update_selected_label_display)
+        binary_layout.addWidget(self.binary_list)
+        
+        # Add instruction for binary mode
+        binary_instruction = QLabel("Select a class above, then click images and label them below.\nEdit class names in Settings > Binary Mode.")
+        binary_instruction.setStyleSheet("font-size: 10px; color: #666; margin-top: 5px;")
+        binary_instruction.setWordWrap(True)
+        binary_layout.addWidget(binary_instruction)
+        
+        layout.addWidget(self.binary_widget)
+        self.binary_widget.hide()  # Hidden by default
         
         # Add/Remove label buttons
         label_controls_layout = QHBoxLayout()
@@ -291,9 +339,17 @@ class ClassificationPanel(QWidget):
     def label_selected_images(self):
         """Emit signal or call parent to label selected images."""
         print("DEBUG: label_selected_images called")
-        print(f"DEBUG: Current ontology list item count: {self.ontology_list.count()}")
-        print(f"DEBUG: Current row selected: {self.ontology_list.currentRow()}")
-        current_item = self.ontology_list.currentItem()
+        
+        # Get current item from the appropriate list
+        if self.binary_mode:
+            current_item = self.binary_list.currentItem()
+            list_widget = self.binary_list
+        else:
+            current_item = self.ontology_list.currentItem()
+            list_widget = self.ontology_list
+        
+        print(f"DEBUG: Current ontology list item count: {list_widget.count()}")
+        print(f"DEBUG: Current row selected: {list_widget.currentRow()}")
         print(f"DEBUG: Current item object: {current_item}")
         if not current_item:
             print("DEBUG: No label selected")
@@ -317,7 +373,12 @@ class ClassificationPanel(QWidget):
     
     def update_selected_label_display(self):
         """Update the display showing which label is currently selected."""
-        current_item = self.ontology_list.currentItem()
+        # Get current item from the appropriate list
+        if self.binary_mode:
+            current_item = self.binary_list.currentItem()
+        else:
+            current_item = self.ontology_list.currentItem()
+        
         if current_item:
             label = current_item.text()
             self.current_label_display.setText(f"Active Label: {label}")
@@ -340,7 +401,11 @@ class ClassificationPanel(QWidget):
     
     def get_selected_label(self):
         """Get the currently selected label."""
-        current_item = self.ontology_list.currentItem()
+        if self.binary_mode:
+            current_item = self.binary_list.currentItem()
+        else:
+            current_item = self.ontology_list.currentItem()
+        
         if current_item:
             return current_item.text()
         return None
@@ -372,3 +437,53 @@ class ClassificationPanel(QWidget):
                     self.main_window.label_colors[label] = color
         
         print(f"DEBUG: Ontology labels set successfully")
+    
+    def set_binary_mode(self, enabled, positive_class="Positive Class", negative_class="Negative Class"):
+        """
+        Enable or disable binary classification mode.
+        
+        Args:
+            enabled: True to enable binary mode, False for multi-label mode
+            positive_class: Label for positive class
+            negative_class: Label for negative class
+        """
+        self.binary_mode = enabled
+        
+        if enabled:
+            # Show binary mode widgets, hide multi-label widgets
+            self.ontology_list.hide()
+            self.add_label_btn.hide()
+            self.remove_label_btn.hide()
+            self.load_ontology_btn.setEnabled(False)
+            self.save_ontology_btn.setEnabled(False)
+            self.binary_widget.show()
+            
+            # Update the internal ontology labels to match binary mode
+            self.ontology_labels = [positive_class, negative_class]
+            
+            # Populate binary list
+            self.binary_list.clear()
+            self.binary_list.addItem(positive_class)
+            self.binary_list.addItem(negative_class)
+            
+            # Also update the hidden ontology list for consistency
+            self.update_ontology_list()
+            
+            # Select the first label (positive) by default
+            if self.binary_list.count() > 0:
+                self.binary_list.setCurrentRow(0)
+        else:
+            # Show multi-label widgets, hide binary mode widgets
+            self.ontology_list.show()
+            self.add_label_btn.show()
+            self.remove_label_btn.show()
+            self.load_ontology_btn.setEnabled(True)
+            self.save_ontology_btn.setEnabled(True)
+            self.binary_widget.hide()
+    
+    def get_binary_classes(self):
+        """Get the current binary class labels."""
+        if self.binary_list.count() >= 2:
+            return (self.binary_list.item(0).text(), 
+                    self.binary_list.item(1).text())
+        return ("Positive Class", "Negative Class")
