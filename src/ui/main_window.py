@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         self.binary_mode = False  # Whether to use binary classification mode
         self.binary_positive_class = "Positive Class"  # Label for positive class in binary mode
         self.binary_negative_class = "Negative Class"  # Label for negative class in binary mode
+        self.binary_mode_warning_shown = False  # Track if binary mode warning has been shown
         self.init_ui()
     
     def init_ui(self):
@@ -506,11 +507,27 @@ class MainWindow(QMainWindow):
             if mode_changed:
                 from PyQt5.QtWidgets import QMessageBox
                 if new_binary_mode:
-                    QMessageBox.information(
-                        self,
-                        "Binary Mode Enabled",
-                        f"Classification panel now shows only 2 labels:\n'{new_positive}' and '{new_negative}'"
-                    )
+                    # Show warning about auto-labeling behavior (only once)
+                    if not self.binary_mode_warning_shown:
+                        QMessageBox.warning(
+                            self,
+                            "Binary Mode Behavior",
+                            f"Binary Mode Enabled\n\n"
+                            f"Classification panel now shows only 2 labels:\n"
+                            f"'{new_positive}' and '{new_negative}'\n\n"
+                            f"IMPORTANT: When labeling images in binary mode, all unlabeled images "
+                            f"on the current page will be automatically labeled as '{new_negative}' "
+                            f"and moved to labeled images.\n\n"
+                            f"This ensures efficient binary classification by assuming unlabeled "
+                            f"images are negative examples."
+                        )
+                        self.binary_mode_warning_shown = True
+                    else:
+                        QMessageBox.information(
+                            self,
+                            "Binary Mode Enabled",
+                            f"Classification panel now shows only 2 labels:\n'{new_positive}' and '{new_negative}'"
+                        )
                 else:
                     QMessageBox.information(
                         self,
@@ -986,6 +1003,26 @@ class MainWindow(QMainWindow):
             )
             return
         
+        # In binary mode, automatically label remaining unlabeled images on current page as negative
+        auto_labeled_count = 0
+        if self.binary_mode:
+            # Get all images on the current page
+            start_idx = self.image_grid.current_page * self.image_grid.images_per_page
+            end_idx = start_idx + self.image_grid.images_per_page
+            page_images = self.image_grid.all_images[start_idx:end_idx]
+            
+            # Find unlabeled images that aren't in pending assignments
+            for img_path in page_images:
+                img_path_str = str(img_path)
+                if img_path_str not in self.labeled_images and img_path_str not in pending_assignments:
+                    # Auto-label with negative class
+                    if self.binary_negative_class not in self.label_colors:
+                        self.label_colors[self.binary_negative_class] = self.generate_color_for_label(len(self.label_colors))
+                    
+                    self.labeled_images[img_path_str] = self.binary_negative_class
+                    auto_labeled_count += 1
+                    print(f"DEBUG: Auto-labeled {img_path_str} as {self.binary_negative_class}")
+        
         # Apply all pending label assignments
         labels_used = set()
         for img_path_str, assigned_label in pending_assignments.items():
@@ -1004,10 +1041,14 @@ class MainWindow(QMainWindow):
         else:
             label_text = f"{len(labels_used)} different labels"
         
+        message = f"Successfully labeled {len(pending_assignments)} image(s) with {label_text}."
+        if auto_labeled_count > 0:
+            message += f"\n\nAuto-labeled {auto_labeled_count} remaining unlabeled image(s) on this page as '{self.binary_negative_class}'."
+        
         QMessageBox.information(
             self,
             "Images Labeled",
-            f"Successfully labeled {len(pending_assignments)} image(s) with {label_text}."
+            message
         )
         
         # Clear selections
