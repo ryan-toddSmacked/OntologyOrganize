@@ -8,6 +8,11 @@ import io
 
 from src.utils.image_transforms import apply_transform
 
+# Import SIFT-related modules at module level to avoid repeated import overhead
+from skimage.feature import SIFT, match_descriptors
+from skimage.measure import ransac
+from skimage.transform import AffineTransform
+
 
 def create_thumbnail(image_path: Path, size: tuple[int, int] = (100, 100), colormap: str = "gray", transform: str = "none", cached_image: Image.Image = None) -> QPixmap | None:
     """
@@ -264,7 +269,7 @@ def compute_ssim(img1_path: Path, img2_path: Path) -> float:
         return 0.0
 
 
-def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
+def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None, base_histogram: np.ndarray = None) -> float:
     """
     Compute histogram correlation between two images.
     
@@ -273,23 +278,28 @@ def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: s
         img2_path: Path to second image
         transform: Image transformation to apply before correlation
         image_cache: Optional dict of cached images {path: PIL.Image}
+        base_histogram: Optional pre-computed normalized histogram for base image
         
     Returns:
         Histogram correlation score (higher is more similar)
     """
     try:
-        img1 = _load_image(img1_path, image_cache)
+        # Use pre-computed histogram or compute it
+        if base_histogram is not None:
+            hist1 = base_histogram
+        else:
+            img1 = _load_image(img1_path, image_cache)
+            arr1 = np.array(img1, dtype=np.uint8)
+            if transform != 'none':
+                arr1 = apply_transform(arr1, transform)
+            hist1, _ = np.histogram(arr1.flatten(), bins=256, range=(0, 256))
+            hist1 = hist1.astype(np.float32) / hist1.sum()
+        
+        # Compute histogram for second image
         img2 = _load_image(img2_path, image_cache)
-        
-        arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
-        
         if transform != 'none':
-            arr1 = apply_transform(arr1, transform)
             arr2 = apply_transform(arr2, transform)
-        
-        # Compute histograms
-        hist1, _ = np.histogram(arr1.flatten(), bins=256, range=(0, 256))
         hist2, _ = np.histogram(arr2.flatten(), bins=256, range=(0, 256))
         
         # Normalize
@@ -305,7 +315,7 @@ def compute_histogram_correlation(img1_path: Path, img2_path: Path, transform: s
         return 0.0
 
 
-def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
+def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None, base_histogram: np.ndarray = None) -> float:
     """
     Compute chi-square distance between histograms (lower is more similar).
     
@@ -314,26 +324,31 @@ def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str
         img2_path: Path to second image
         transform: Image transformation to apply
         image_cache: Optional dict of cached images {path: PIL.Image}
+        base_histogram: Optional pre-computed histogram for base image (with epsilon added)
         
     Returns:
         Negative chi-square distance (higher is more similar for consistency)
     """
     try:
-        img1 = _load_image(img1_path, image_cache)
+        # Use pre-computed histogram or compute it
+        if base_histogram is not None:
+            hist1 = base_histogram
+        else:
+            img1 = _load_image(img1_path, image_cache)
+            arr1 = np.array(img1, dtype=np.uint8)
+            if transform != 'none':
+                arr1 = apply_transform(arr1, transform)
+            hist1, _ = np.histogram(arr1.flatten(), bins=256, range=(0, 256))
+            hist1 = hist1.astype(np.float32) + 1e-10
+        
+        # Compute histogram for second image
         img2 = _load_image(img2_path, image_cache)
-        
-        arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
-        
         if transform != 'none':
-            arr1 = apply_transform(arr1, transform)
             arr2 = apply_transform(arr2, transform)
-        
-        hist1, _ = np.histogram(arr1.flatten(), bins=256, range=(0, 256))
         hist2, _ = np.histogram(arr2.flatten(), bins=256, range=(0, 256))
         
         # Add small epsilon to avoid division by zero
-        hist1 = hist1.astype(np.float32) + 1e-10
         hist2 = hist2.astype(np.float32) + 1e-10
         
         # Chi-square distance
@@ -347,7 +362,7 @@ def compute_chi_square_distance(img1_path: Path, img2_path: Path, transform: str
         return 0.0
 
 
-def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
+def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None, base_histogram: np.ndarray = None) -> float:
     """
     Compute Bhattacharyya distance between histograms.
     
@@ -356,26 +371,31 @@ def compute_bhattacharyya_distance(img1_path: Path, img2_path: Path, transform: 
         img2_path: Path to second image
         transform: Image transformation to apply
         image_cache: Optional dict of cached images {path: PIL.Image}
+        base_histogram: Optional pre-computed normalized histogram for base image
         
     Returns:
         Negative Bhattacharyya distance (higher is more similar)
     """
     try:
-        img1 = _load_image(img1_path, image_cache)
+        # Use pre-computed histogram or compute it
+        if base_histogram is not None:
+            hist1 = base_histogram
+        else:
+            img1 = _load_image(img1_path, image_cache)
+            arr1 = np.array(img1, dtype=np.uint8)
+            if transform != 'none':
+                arr1 = apply_transform(arr1, transform)
+            hist1, _ = np.histogram(arr1.flatten(), bins=256, range=(0, 256))
+            hist1 = hist1.astype(np.float32) / hist1.sum()
+        
+        # Compute histogram for second image
         img2 = _load_image(img2_path, image_cache)
-        
-        arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
-        
         if transform != 'none':
-            arr1 = apply_transform(arr1, transform)
             arr2 = apply_transform(arr2, transform)
-        
-        hist1, _ = np.histogram(arr1.flatten(), bins=256, range=(0, 256))
         hist2, _ = np.histogram(arr2.flatten(), bins=256, range=(0, 256))
         
         # Normalize
-        hist1 = hist1.astype(np.float32) / hist1.sum()
         hist2 = hist2.astype(np.float32) / hist2.sum()
         
         # Bhattacharyya coefficient
@@ -557,7 +577,7 @@ def compute_mutual_information(img1_path: Path, img2_path: Path, transform: str 
         return 0.0
 
 
-def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None) -> float:
+def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None, base_hog: np.ndarray = None) -> float:
     """
     Compute similarity based on Histogram of Oriented Gradients.
     
@@ -566,45 +586,42 @@ def compute_hog_similarity(img1_path: Path, img2_path: Path, transform: str = 'n
         img2_path: Path to second image
         transform: Image transformation to apply
         image_cache: Optional dict of cached images {path: PIL.Image}
+        base_hog: Optional pre-computed normalized HOG histogram for base image
         
     Returns:
         HOG similarity (higher is more similar)
     """
     try:
-        from scipy.ndimage import gaussian_filter
+        # Use pre-computed HOG or compute it
+        if base_hog is not None:
+            hist1 = base_hog
+        else:
+            img1 = _load_image(img1_path, image_cache)
+            arr1 = np.array(img1, dtype=np.uint8)
+            if transform != 'none':
+                arr1 = apply_transform(arr1, transform)
+            gx1 = np.gradient(arr1.astype(float), axis=1)
+            gy1 = np.gradient(arr1.astype(float), axis=0)
+            mag1 = np.sqrt(gx1**2 + gy1**2)
+            ori1 = np.arctan2(gy1, gx1)
+            bins = 9
+            hist1, _ = np.histogram(ori1.flatten(), bins=bins, range=(-np.pi, np.pi), weights=mag1.flatten())
+            hist1 = hist1 / (hist1.sum() + 1e-10)
         
-        img1 = _load_image(img1_path, image_cache)
+        # Compute HOG for second image
         img2 = _load_image(img2_path, image_cache)
-        
-        if img1.size != img2.size:
-            img2 = img2.resize(img1.size, Image.Resampling.LANCZOS)
-        
-        arr1 = np.array(img1, dtype=np.uint8)
         arr2 = np.array(img2, dtype=np.uint8)
-        
         if transform != 'none':
-            arr1 = apply_transform(arr1, transform)
             arr2 = apply_transform(arr2, transform)
         
-        # Compute gradients
-        gx1 = np.gradient(arr1.astype(float), axis=1)
-        gy1 = np.gradient(arr1.astype(float), axis=0)
         gx2 = np.gradient(arr2.astype(float), axis=1)
         gy2 = np.gradient(arr2.astype(float), axis=0)
-        
-        # Compute gradient magnitudes and orientations
-        mag1 = np.sqrt(gx1**2 + gy1**2)
-        ori1 = np.arctan2(gy1, gx1)
         mag2 = np.sqrt(gx2**2 + gy2**2)
         ori2 = np.arctan2(gy2, gx2)
-        
-        # Create orientation histograms (9 bins)
         bins = 9
-        hist1, _ = np.histogram(ori1.flatten(), bins=bins, range=(-np.pi, np.pi), weights=mag1.flatten())
         hist2, _ = np.histogram(ori2.flatten(), bins=bins, range=(-np.pi, np.pi), weights=mag2.flatten())
         
         # Normalize
-        hist1 = hist1 / (hist1.sum() + 1e-10)
         hist2 = hist2 / (hist2.sum() + 1e-10)
         
         # Compute correlation
@@ -718,4 +735,94 @@ def compute_difference_hash(img1_path: Path, img2_path: Path, transform: str = '
         print(f"Error computing difference hash: {e}")
         return 0.0
 
-        return Image.fromarray(gray_image, 'L')
+
+def compute_sift_similarity(img1_path: Path, img2_path: Path, transform: str = 'none', image_cache: dict = None, base_sift_data: tuple = None) -> float:
+    """
+    Compute SIFT feature matching similarity using inlier ratio.
+    
+    Extracts SIFT keypoints and descriptors, matches them, and uses RANSAC
+    to find geometric transformation. Returns the inlier ratio as similarity.
+    
+    Args:
+        img1_path: Path to first image (base image)
+        img2_path: Path to second image
+        transform: Image transformation to apply before SIFT extraction
+        image_cache: Optional dict of cached images {path: PIL.Image}
+        base_sift_data: Optional pre-computed (keypoints, descriptors) for base image
+        
+    Returns:
+        Inlier ratio (0.0 to 1.0, higher is more similar)
+    """
+    try:
+        # Extract or use pre-computed SIFT features for base image
+        if base_sift_data is not None:
+            keypoints1, descriptors1 = base_sift_data
+        else:
+            # Load and process base image
+            img1 = _load_image(img1_path, image_cache)
+            arr1 = np.array(img1, dtype=np.uint8)
+            
+            if transform != 'none':
+                arr1 = apply_transform(arr1, transform)
+            
+            # Normalize to 0-1 range for SIFT (float32 is sufficient and faster)
+            arr1 = arr1.astype(np.float32) / 255.0
+            
+            # Extract SIFT features with reduced parameters for speed
+            sift1 = SIFT(n_octaves=3, n_scales=3, sigma_min=1.6)
+            sift1.detect_and_extract(arr1)
+            keypoints1 = sift1.keypoints
+            descriptors1 = sift1.descriptors
+        
+        # Load and process second image
+        img2 = _load_image(img2_path, image_cache)
+        arr2 = np.array(img2, dtype=np.uint8)
+        
+        if transform != 'none':
+            arr2 = apply_transform(arr2, transform)
+        
+        # Normalize to 0-1 range for SIFT (float32 is sufficient and faster)
+        arr2 = arr2.astype(np.float32) / 255.0
+        
+        # Extract SIFT features with reduced parameters for speed
+        sift2 = SIFT(n_octaves=3, n_scales=3, sigma_min=1.6)
+        sift2.detect_and_extract(arr2)
+        keypoints2 = sift2.keypoints
+        descriptors2 = sift2.descriptors
+        
+        # Check if enough features were found
+        if len(keypoints1) < 4 or len(keypoints2) < 4:
+            return 0.0
+        
+        # Match descriptors using ratio test
+        matches = match_descriptors(descriptors1, descriptors2, cross_check=True, max_ratio=0.8)
+        
+        if len(matches) < 4:
+            return 0.0
+        
+        # Extract matched keypoint coordinates
+        src_pts = keypoints1[matches[:, 0]][:, :2]
+        dst_pts = keypoints2[matches[:, 1]][:, :2]
+        
+        # Use RANSAC to find affine transform and filter outliers
+        try:
+            model, inliers = ransac(
+                (src_pts, dst_pts),
+                AffineTransform,
+                min_samples=3,
+                residual_threshold=2.0,
+                max_trials=500
+            )
+            
+            num_inliers = np.sum(inliers)
+            inlier_ratio = num_inliers / len(matches)
+            
+            return float(inlier_ratio)
+            
+        except Exception as ransac_error:
+            # RANSAC failed (not enough good matches)
+            return 0.0
+        
+    except Exception as e:
+        print(f"Error computing SIFT similarity for {img2_path.name}: {e}")
+        return 0.0

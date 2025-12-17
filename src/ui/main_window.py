@@ -247,6 +247,9 @@ class MainWindow(QMainWindow):
         # Feature-Based submenu
         feature_sort_menu = sort_menu.addMenu("Feature-Based Similarity")
         
+        sift_action = feature_sort_menu.addAction("SIFT Feature Matching")
+        sift_action.triggered.connect(lambda: self.start_correlation_mode('sift'))
+        
         hog_action = feature_sort_menu.addAction("HOG Similarity")
         hog_action.triggered.connect(lambda: self.start_correlation_mode('hog'))
         
@@ -636,7 +639,8 @@ class MainWindow(QMainWindow):
             compute_image_correlation, compute_ssim, compute_histogram_correlation,
             compute_chi_square_distance, compute_bhattacharyya_distance, compute_emd,
             compute_mae, compute_cosine_similarity, compute_mutual_information,
-            compute_hog_similarity, compute_perceptual_hash, compute_difference_hash
+            compute_hog_similarity, compute_perceptual_hash, compute_difference_hash,
+            compute_sift_similarity
         )
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
@@ -651,21 +655,73 @@ class MainWindow(QMainWindow):
         # Get image cache from image_grid
         image_cache = self.image_grid.image_cache if self.image_grid.image_cache else None
         
-        # Map method names to functions
+        # Pre-compute base image statistics for optimization
+        from src.utils.image_utils import _load_image
+        from src.utils.image_transforms import apply_transform
+        import numpy as np
+        
+        base_sift_data = None
+        base_histogram = None
+        base_hog = None
+        
+        print(f"Pre-computing base image statistics for {self.correlation_method}...")
+        
+        try:
+            # Load base image once
+            base_img = _load_image(image_path, image_cache)
+            base_arr = np.array(base_img, dtype=np.uint8)
+            
+            if self.current_transform != 'none':
+                base_arr = apply_transform(base_arr, self.current_transform)
+            
+            # Pre-compute based on method
+            if self.correlation_method == 'sift':
+                from skimage.feature import SIFT
+                base_arr_sift = base_arr.astype(np.float32) / 255.0
+                base_sift = SIFT(n_octaves=3, n_scales=3, sigma_min=1.6)
+                base_sift.detect_and_extract(base_arr_sift)
+                base_sift_data = (base_sift.keypoints, base_sift.descriptors)
+                print(f"Extracted {len(base_sift.keypoints)} SIFT keypoints")
+                
+            elif self.correlation_method in ['hist_corr', 'bhattacharyya']:
+                hist, _ = np.histogram(base_arr.flatten(), bins=256, range=(0, 256))
+                base_histogram = hist.astype(np.float32) / hist.sum()
+                print("Computed normalized histogram")
+                
+            elif self.correlation_method == 'chi_square':
+                hist, _ = np.histogram(base_arr.flatten(), bins=256, range=(0, 256))
+                base_histogram = hist.astype(np.float32) + 1e-10
+                print("Computed histogram with epsilon")
+                
+            elif self.correlation_method == 'hog':
+                gx = np.gradient(base_arr.astype(float), axis=1)
+                gy = np.gradient(base_arr.astype(float), axis=0)
+                mag = np.sqrt(gx**2 + gy**2)
+                ori = np.arctan2(gy, gx)
+                hist, _ = np.histogram(ori.flatten(), bins=9, range=(-np.pi, np.pi), weights=mag.flatten())
+                base_hog = hist / (hist.sum() + 1e-10)
+                print("Computed HOG histogram")
+                
+        except Exception as e:
+            print(f"Warning: Failed to pre-compute base statistics: {e}")
+            # Continue without pre-computation
+        
+        # Map method names to functions with pre-computed data
         method_map = {
             'ncc': lambda p1, p2: compute_image_correlation(p1, p2, method='ncc', transform=self.current_transform, image_cache=image_cache),
             'mse': lambda p1, p2: compute_image_correlation(p1, p2, method='mse', transform=self.current_transform, image_cache=image_cache),
-            'ssim': lambda p1, p2: compute_ssim(p1, p2),  # SSIM doesn't use transform parameter yet
+            'ssim': lambda p1, p2: compute_ssim(p1, p2),
             'mae': lambda p1, p2: compute_mae(p1, p2, transform=self.current_transform, image_cache=image_cache),
             'cosine': lambda p1, p2: compute_cosine_similarity(p1, p2, transform=self.current_transform, image_cache=image_cache),
-            'hist_corr': lambda p1, p2: compute_histogram_correlation(p1, p2, transform=self.current_transform, image_cache=image_cache),
-            'chi_square': lambda p1, p2: compute_chi_square_distance(p1, p2, transform=self.current_transform, image_cache=image_cache),
-            'bhattacharyya': lambda p1, p2: compute_bhattacharyya_distance(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'hist_corr': lambda p1, p2: compute_histogram_correlation(p1, p2, transform=self.current_transform, image_cache=image_cache, base_histogram=base_histogram),
+            'chi_square': lambda p1, p2: compute_chi_square_distance(p1, p2, transform=self.current_transform, image_cache=image_cache, base_histogram=base_histogram),
+            'bhattacharyya': lambda p1, p2: compute_bhattacharyya_distance(p1, p2, transform=self.current_transform, image_cache=image_cache, base_histogram=base_histogram),
             'emd': lambda p1, p2: compute_emd(p1, p2, transform=self.current_transform, image_cache=image_cache),
             'mutual_info': lambda p1, p2: compute_mutual_information(p1, p2, transform=self.current_transform, image_cache=image_cache),
-            'hog': lambda p1, p2: compute_hog_similarity(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'hog': lambda p1, p2: compute_hog_similarity(p1, p2, transform=self.current_transform, image_cache=image_cache, base_hog=base_hog),
             'phash': lambda p1, p2: compute_perceptual_hash(p1, p2, transform=self.current_transform, image_cache=image_cache),
             'dhash': lambda p1, p2: compute_difference_hash(p1, p2, transform=self.current_transform, image_cache=image_cache),
+            'sift': lambda p1, p2: compute_sift_similarity(p1, p2, transform=self.current_transform, image_cache=image_cache, base_sift_data=base_sift_data),
         }
         
         compute_func = method_map.get(self.correlation_method, method_map['ncc'])
