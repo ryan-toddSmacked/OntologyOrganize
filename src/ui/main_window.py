@@ -1173,9 +1173,9 @@ class MainWindow(QMainWindow):
         try:
             # Collect all state data
             state_data = {
-                "labeled_images": self.labeled_images,
+                "labeled_images": {k.replace('\\', '/'): v for k, v in self.labeled_images.items()},
                 "label_colors": self.label_colors,
-                "current_folder": str(self.controller.get_current_folder()) if self.controller.get_current_folder() else None,
+                "current_folder": str(self.controller.get_current_folder()).replace('\\', '/') if self.controller.get_current_folder() else None,
                 "ontology_labels": self.classification_panel.get_ontology_labels(),
                 "grid_cols": self.grid_cols,
                 "grid_rows": self.grid_rows,
@@ -1187,8 +1187,8 @@ class MainWindow(QMainWindow):
                 "current_page": self.image_grid.current_page,
                 "thread_count": self.thread_count,
                 "preload_images": self.preload_images,
-                "custom_sort_order": [str(img) for img in self.custom_sort_order] if self.custom_sort_order else None,
-                "base_image_for_correlation": str(self.base_image_for_correlation) if self.base_image_for_correlation else None,
+                "custom_sort_order": [str(img).replace('\\', '/') for img in self.custom_sort_order] if self.custom_sort_order else None,
+                "base_image_for_correlation": str(self.base_image_for_correlation).replace('\\', '/') if self.base_image_for_correlation else None,
                 "correlation_method": self.correlation_method,
                 "binary_mode": self.binary_mode,
                 "binary_positive_class": self.binary_positive_class,
@@ -1215,9 +1215,9 @@ class MainWindow(QMainWindow):
         try:
             # Collect all state data
             state_data = {
-                "labeled_images": self.labeled_images,
+                "labeled_images": {k.replace('\\', '/'): v for k, v in self.labeled_images.items()},
                 "label_colors": self.label_colors,
-                "current_folder": str(self.controller.get_current_folder()) if self.controller.get_current_folder() else None,
+                "current_folder": str(self.controller.get_current_folder()).replace('\\', '/') if self.controller.get_current_folder() else None,
                 "ontology_labels": self.classification_panel.get_ontology_labels(),
                 "grid_cols": self.grid_cols,
                 "grid_rows": self.grid_rows,
@@ -1229,8 +1229,8 @@ class MainWindow(QMainWindow):
                 "current_page": self.image_grid.current_page,
                 "thread_count": self.thread_count,
                 "preload_images": self.preload_images,
-                "custom_sort_order": [str(img) for img in self.custom_sort_order] if self.custom_sort_order else None,
-                "base_image_for_correlation": str(self.base_image_for_correlation) if self.base_image_for_correlation else None,
+                "custom_sort_order": [str(img).replace('\\', '/') for img in self.custom_sort_order] if self.custom_sort_order else None,
+                "base_image_for_correlation": str(self.base_image_for_correlation).replace('\\', '/') if self.base_image_for_correlation else None,
                 "correlation_method": self.correlation_method,
                 "binary_mode": self.binary_mode,
                 "binary_positive_class": self.binary_positive_class,
